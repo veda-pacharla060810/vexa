@@ -360,52 +360,6 @@ function Dashboard() {
     })
   }
 
-  if (focusActive) {
-    return (
-      <div className="min-h-screen bg-[#754B4D] px-4 py-8 text-[#D8A694] sm:px-6 lg:px-8">
-        <div className="mx-auto flex min-h-[calc(100vh-4rem)] max-w-4xl flex-col items-center justify-center rounded-[2rem] border border-white/20 bg-[#754B4D]/95 p-6 shadow-2xl backdrop-blur-xl sm:p-8">
-          <div className="w-full max-w-2xl rounded-[2rem] border border-white/20 bg-white/10 p-8 text-center shadow-inner">
-            <p className="font-mono text-[10px] uppercase tracking-[0.4em] text-[#D8A694]/70">&gt; focus_mode.exe</p>
-            <p className="mt-2 font-mono text-[10px] uppercase tracking-[0.4em] text-[#D8A694]/70">&gt; distractions paused</p>
-            <p className="mt-2 font-mono text-[10px] uppercase tracking-[0.4em] text-[#D8A694]/70">&gt; timer initialized</p>
-
-            <div className="mt-8 rounded-[1.5rem] border border-white/20 bg-[#754B4D]/70 p-6 shadow-inner">
-              <p className="font-sans text-sm uppercase tracking-[0.3em] text-[#D8A694]/70">Current task</p>
-              <h2 className="mt-2 font-serif text-3xl text-white">{selectedFocusTask ? selectedFocusTask.title : 'General focus'}</h2>
-              <p className="mt-4 font-mono text-xs uppercase tracking-[0.3em] text-[#D8A694]/70">{focusIsPaused ? 'paused' : 'in flow'}</p>
-              <div className="mt-6 font-serif text-7xl font-semibold tracking-[0.2em] text-white sm:text-8xl">
-                {formatCountdown(focusTimeSeconds)}
-              </div>
-            </div>
-
-            <div className="mt-8 flex flex-wrap items-center justify-center gap-3">
-              <button
-                type="button"
-                onClick={() => setFocusIsPaused((current) => !current)}
-                className="rounded-2xl border border-white/30 bg-white/20 px-5 py-3 font-sans text-sm font-semibold text-white shadow-lg backdrop-blur transition hover:bg-white/30"
-              >
-                {focusIsPaused ? 'Resume' : 'Pause'}
-              </button>
-              <button
-                type="button"
-                onClick={() => void completeFocusSession()}
-                className="rounded-2xl border border-[#D8A694]/40 bg-[#D8A694]/20 px-5 py-3 font-sans text-sm font-semibold text-white shadow-lg backdrop-blur transition hover:bg-[#D8A694]/30"
-              >
-                Complete
-              </button>
-            </div>
-
-            {focusError ? (
-              <div className="mt-6 rounded-2xl border border-[#D8A694]/30 bg-[#A86A65]/40 px-4 py-3 font-sans text-sm text-white">
-                {focusError}
-              </div>
-            ) : null}
-          </div>
-        </div>
-      </div>
-    )
-  }
-
   const startFocusSession = async () => {
     if (!user?.id) return
 
@@ -489,6 +443,52 @@ function Dashboard() {
     setFocusSessionId(null)
     setFocusCompleteRequested(false)
     setView('tasks')
+  }
+
+  if (focusActive) {
+    return (
+      <div className="min-h-screen bg-[#754B4D] px-4 py-8 text-[#D8A694] sm:px-6 lg:px-8">
+        <div className="mx-auto flex min-h-[calc(100vh-4rem)] max-w-4xl flex-col items-center justify-center rounded-[2rem] border border-white/20 bg-[#754B4D]/95 p-6 shadow-2xl backdrop-blur-xl sm:p-8">
+          <div className="w-full max-w-2xl rounded-[2rem] border border-white/20 bg-white/10 p-8 text-center shadow-inner">
+            <p className="font-mono text-[10px] uppercase tracking-[0.4em] text-[#D8A694]/70">&gt; focus_mode.exe</p>
+            <p className="mt-2 font-mono text-[10px] uppercase tracking-[0.4em] text-[#D8A694]/70">&gt; distractions paused</p>
+            <p className="mt-2 font-mono text-[10px] uppercase tracking-[0.4em] text-[#D8A694]/70">&gt; timer initialized</p>
+
+            <div className="mt-8 rounded-[1.5rem] border border-white/20 bg-[#754B4D]/70 p-6 shadow-inner">
+              <p className="font-sans text-sm uppercase tracking-[0.3em] text-[#D8A694]/70">Current task</p>
+              <h2 className="mt-2 font-serif text-3xl text-white">{selectedFocusTask ? selectedFocusTask.title : 'General focus'}</h2>
+              <p className="mt-4 font-mono text-xs uppercase tracking-[0.3em] text-[#D8A694]/70">{focusIsPaused ? 'paused' : 'in flow'}</p>
+              <div className="mt-6 font-serif text-7xl font-semibold tracking-[0.2em] text-white sm:text-8xl">
+                {formatCountdown(focusTimeSeconds)}
+              </div>
+            </div>
+
+            <div className="mt-8 flex flex-wrap items-center justify-center gap-3">
+              <button
+                type="button"
+                onClick={() => setFocusIsPaused((current) => !current)}
+                className="rounded-2xl border border-white/30 bg-white/20 px-5 py-3 font-sans text-sm font-semibold text-white shadow-lg backdrop-blur transition hover:bg-white/30"
+              >
+                {focusIsPaused ? 'Resume' : 'Pause'}
+              </button>
+              <button
+                type="button"
+                onClick={() => void completeFocusSession()}
+                className="rounded-2xl border border-[#D8A694]/40 bg-[#D8A694]/20 px-5 py-3 font-sans text-sm font-semibold text-white shadow-lg backdrop-blur transition hover:bg-[#D8A694]/30"
+              >
+                Complete
+              </button>
+            </div>
+
+            {focusError ? (
+              <div className="mt-6 rounded-2xl border border-[#D8A694]/30 bg-[#A86A65]/40 px-4 py-3 font-sans text-sm text-white">
+                {focusError}
+              </div>
+            ) : null}
+          </div>
+        </div>
+      </div>
+    )
   }
 
   useEffect(() => {
