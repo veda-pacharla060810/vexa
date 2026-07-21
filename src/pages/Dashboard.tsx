@@ -61,6 +61,21 @@ type EventFormState = {
 
 type ViewMode = 'tasks' | 'calendar' | 'focus'
 
+const focusQuotes = [
+  'One task. Right now. That\'s it.',
+  'You do not need to feel ready. You only need to begin.',
+  'The next five minutes count.',
+  'No drama. Just one honest block.',
+  'Let the page be enough for now.',
+  'A quiet start still moves you forward.',
+  'You can be tired and still keep going.',
+  'Clear the noise. Stay with this.',
+  'Small focus beats forced motivation.',
+  'This is the part where you stop scrolling.',
+  'One breath. One paragraph. One problem.',
+  'You are allowed to do the boring thing well.',
+]
+
 const initialTaskFormState: TaskFormState = {
   title: '',
   reason: '',
@@ -104,6 +119,7 @@ function Dashboard() {
   const [focusLoading, setFocusLoading] = useState(false)
   const [focusError, setFocusError] = useState('')
   const [focusCompleteRequested, setFocusCompleteRequested] = useState(false)
+  const [focusQuote, setFocusQuote] = useState(focusQuotes[0])
   const [calendarMonth, setCalendarMonth] = useState(() => {
     const today = new Date()
     return new Date(today.getFullYear(), today.getMonth(), 1)
@@ -384,10 +400,13 @@ function Dashboard() {
       return
     }
 
+    const nextQuote = focusQuotes[Math.floor(Math.random() * focusQuotes.length)]
+
     setFocusSessionId(newSession.id)
     setFocusActive(true)
     setFocusIsPaused(false)
     setFocusTimeSeconds(25 * 60)
+    setFocusQuote(nextQuote)
     setFocusElapsedSeconds(0)
     setFocusCompleteRequested(false)
     setView('focus')
@@ -462,6 +481,10 @@ function Dashboard() {
                 {formatCountdown(focusTimeSeconds)}
               </div>
             </div>
+
+            <p className="mt-6 max-w-xl font-hand text-xl leading-relaxed text-[#D8A694]/90 sm:text-2xl">
+              {focusQuote}
+            </p>
 
             <div className="mt-8 flex flex-wrap items-center justify-center gap-3">
               <button
