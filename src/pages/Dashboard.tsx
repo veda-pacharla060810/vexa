@@ -72,7 +72,21 @@ type ScrollSession = {
   created_at: string
 }
 
-type ViewMode = 'tasks' | 'calendar' | 'focus' | 'scroll'
+type DailyReceipt = {
+  id: string
+  user_id: string
+  receipt_date: string
+  focus_time_minutes: number
+  scroll_time_minutes: number
+  tasks_completed_count: number
+  biggest_win: string | null
+  biggest_distraction: string | null
+  ai_summary: string | null
+  tomorrow_priority: string | null
+  created_at: string
+}
+
+type ViewMode = 'tasks' | 'calendar' | 'focus' | 'scroll' | 'receipt'
 
 const focusQuotes = [
   'One task. Right now. That\'s it.',
@@ -145,6 +159,13 @@ function Dashboard() {
   const [scrollLoading, setScrollLoading] = useState(true)
   const [scrollError, setScrollError] = useState('')
   const [scrollSubmitting, setScrollSubmitting] = useState(false)
+  const [receiptBiggestWin, setReceiptBiggestWin] = useState('')
+  const [receiptBiggestDistraction, setReceiptBiggestDistraction] = useState('')
+  const [receiptTomorrowPriority, setReceiptTomorrowPriority] = useState('')
+  const [receiptGenerating, setReceiptGenerating] = useState(false)
+  const [receiptError, setReceiptError] = useState('')
+  const [receipts, setReceipts] = useState<DailyReceipt[]>([])
+  const [receiptsLoading, setReceiptsLoading] = useState(true)
   const [calendarMonth, setCalendarMonth] = useState(() => {
     const today = new Date()
     return new Date(today.getFullYear(), today.getMonth(), 1)
@@ -237,10 +258,33 @@ function Dashboard() {
     setScrollSessions((data ?? []) as ScrollSession[])
   }
 
+  const fetchReceipts = async () => {
+    if (!user?.id) return
+
+    setReceiptsLoading(true)
+    setReceiptError('')
+
+    const { data, error } = await supabase
+      .from('daily_receipts')
+      .select('*')
+      .eq('user_id', user.id)
+      .order('receipt_date', { ascending: false })
+
+    setReceiptsLoading(false)
+
+    if (error) {
+      setReceiptError(`The receipts history could not be loaded: ${error.message}. Please try again.`)
+      return
+    }
+
+    setReceipts((data ?? []) as DailyReceipt[])
+  }
+
   useEffect(() => {
     void fetchTasks()
     void fetchEvents()
     void fetchScrollSessions()
+    void fetchReceipts()
   }, [user?.id])
 
   const handleTaskSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
@@ -524,6 +568,111 @@ function Dashboard() {
     setScrollReason('')
   }
 
+  const generateReceipt = async () => {
+    if (!user?.id) return
+
+    setReceiptGenerating(true)
+    setReceiptError('')
+
+    const todayKey = formatDateKey(new Date())
+
+    const { data: todayTasks, error: tasksError } = await supabase
+      .from('tasks')
+      .select('id, completed, created_at')
+      .eq('user_id', user.id)
+
+    if (tasksError) {
+      setReceiptGenerating(false)
+      setReceiptError(`The receipt could not be generated: ${tasksError.message}. Please try again.`)
+      return
+    }
+
+    const todayTaskEntries = (todayTasks ?? []).filter((task) => {
+      const createdAtKey = formatDateKey(task.created_at)
+      return createdAtKey === todayKey
+    })
+
+    const completedTodayCount = todayTaskEntries.filter((task) => task.completed).length
+
+    const { data: focusRows, error: focusError } = await supabase
+      .from('focus_sessions')
+      .select('duration_minutes, started_at')
+      .eq('user_id', user.id)
+
+    if (focusError) {
+      setReceiptGenerating(false)
+      setReceiptError(`The receipt could not be generated: ${focusError.message}. Please try again.`)
+      return
+    }
+
+    const { data: scrollRows, error: scrollError } = await supabase
+      .from('scroll_sessions')
+      .select('duration_minutes, started_at')
+      .eq('user_id', user.id)
+
+    if (scrollError) {
+      setReceiptGenerating(false)
+      setReceiptError(`The receipt could not be generated: ${scrollError.message}. Please try again.`)
+      return
+    }
+
+    const focusTimeMinutes = (focusRows ?? [])
+      .filter((row) => formatDateKey(row.started_at) === todayKey)
+      .reduce((total, row) => total + (row.duration_minutes ?? 0), 0)
+
+    const scrollTimeMinutes = (scrollRows ?? [])
+      .filter((row) => formatDateKey(row.started_at) === todayKey)
+      .reduce((total, row) => total + (row.duration_minutes ?? 0), 0)
+
+    const summaryParts = []
+    if (focusTimeMinutes > scrollTimeMinutes) {
+      summaryParts.push('You spent more time on focus than scrolling today.')
+    } else if (scrollTimeMinutes > focusTimeMinutes) {
+      summaryParts.push('Your scroll time edged out focus today, so a lighter reset might help tomorrow.')
+    } else {
+      summaryParts.push('Your day stayed balanced between focus and scrolling.')
+    }
+
+    if (completedTodayCount >= 2) {
+      summaryParts.push('You completed enough work to keep the momentum going.')
+    } else {
+      summaryParts.push('A small win would make tomorrow feel easier.')
+    }
+
+    // TODO: replace with real Claude-generated summary once AI Command Center is built.
+    const aiSummary = summaryParts.join(' ')
+
+    const payload = {
+      user_id: user.id,
+      receipt_date: todayKey,
+      focus_time_minutes: focusTimeMinutes,
+      scroll_time_minutes: scrollTimeMinutes,
+      tasks_completed_count: completedTodayCount,
+      biggest_win: receiptBiggestWin.trim() || null,
+      biggest_distraction: receiptBiggestDistraction.trim() || null,
+      ai_summary: aiSummary,
+      tomorrow_priority: receiptTomorrowPriority.trim() || null,
+      created_at: new Date().toISOString(),
+    }
+
+    const { data, error } = await supabase.from('daily_receipts').upsert(payload, { onConflict: 'user_id,receipt_date' }).select().single()
+    setReceiptGenerating(false)
+
+    if (error || !data) {
+      setReceiptError(`The receipt could not be saved: ${error?.message ?? 'No receipt returned.'}. Please try again.`)
+      return
+    }
+
+    setReceipts((currentReceipts) => {
+      const nextReceipts = currentReceipts.filter((receipt) => receipt.receipt_date !== todayKey)
+      return [data as DailyReceipt, ...nextReceipts]
+    })
+
+    setReceiptBiggestWin('')
+    setReceiptBiggestDistraction('')
+    setReceiptTomorrowPriority('')
+  }
+
   const completeFocusSession = async () => {
     if (!user?.id || !focusSessionId) {
       setFocusActive(false)
@@ -757,6 +906,13 @@ function Dashboard() {
               >
                 Scroll
               </button>
+              <button
+                type="button"
+                onClick={() => setView('receipt')}
+                className={`rounded-full px-4 py-2 font-sans text-sm ${view === 'receipt' ? 'bg-[#D8A694] text-[#754B4D]' : 'text-white/80'}`}
+              >
+                Receipt
+              </button>
             </div>
 
             <button
@@ -958,6 +1114,103 @@ function Dashboard() {
                         </div>
                         {session.reflection ? <p className="mt-3 font-sans text-sm text-white/70">{session.reflection}</p> : null}
                       </div>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+            </div>
+          </div>
+        ) : view === 'receipt' ? (
+          <div className="mt-6 rounded-[1.5rem] border border-white/20 bg-[#754B4D]/70 p-4 shadow-inner">
+            <div className="rounded-[1.25rem] border border-white/20 bg-white/10 p-6">
+              <p className="font-mono text-xs uppercase tracking-[0.3em] text-[#D8A694]/70">&gt; daily_receipt</p>
+              <h2 className="mt-3 font-serif text-2xl text-white">Generate today's receipt</h2>
+              <p className="mt-2 font-sans text-sm text-white/80">A short paper trail for your day: what moved, what pulled you off course, and what matters tomorrow.</p>
+
+              <div className="mt-6 space-y-4">
+                <div className="grid gap-4 md:grid-cols-3">
+                  <div>
+                    <label className="mb-2 block font-sans text-sm text-[#D8A694]">Biggest win</label>
+                    <input
+                      value={receiptBiggestWin}
+                      onChange={(event) => setReceiptBiggestWin(event.target.value)}
+                      placeholder="What felt good?"
+                      className="w-full rounded-2xl border border-white/20 bg-white/20 px-3 py-2 font-sans text-sm text-white outline-none placeholder:text-white/60 focus:border-[#D8A694]"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="mb-2 block font-sans text-sm text-[#D8A694]">Biggest distraction</label>
+                    <input
+                      value={receiptBiggestDistraction}
+                      onChange={(event) => setReceiptBiggestDistraction(event.target.value)}
+                      placeholder="What pulled you off track?"
+                      className="w-full rounded-2xl border border-white/20 bg-white/20 px-3 py-2 font-sans text-sm text-white outline-none placeholder:text-white/60 focus:border-[#D8A694]"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="mb-2 block font-sans text-sm text-[#D8A694]">Tomorrow priority</label>
+                    <input
+                      value={receiptTomorrowPriority}
+                      onChange={(event) => setReceiptTomorrowPriority(event.target.value)}
+                      placeholder="One thing to carry forward"
+                      className="w-full rounded-2xl border border-white/20 bg-white/20 px-3 py-2 font-sans text-sm text-white outline-none placeholder:text-white/60 focus:border-[#D8A694]"
+                    />
+                  </div>
+                </div>
+
+                <div className="flex justify-end">
+                  <button
+                    type="button"
+                    onClick={() => void generateReceipt()}
+                    disabled={receiptGenerating}
+                    className="rounded-2xl border border-white/30 bg-white/20 px-4 py-2 font-sans text-sm font-semibold text-white shadow-lg backdrop-blur transition hover:bg-white/30 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {receiptGenerating ? 'Generating…' : "Generate Today's Receipt"}
+                  </button>
+                </div>
+              </div>
+
+              {receiptError ? (
+                <div className="mt-4 rounded-2xl border border-[#D8A694]/30 bg-[#A86A65]/40 px-4 py-3 font-sans text-sm text-white">
+                  {receiptError}
+                </div>
+              ) : null}
+
+              <div className="mt-6 rounded-[1.25rem] border border-white/20 bg-[#754B4D]/60 p-5">
+                <p className="font-mono text-xs uppercase tracking-[0.3em] text-[#D8A694]/70">receipt preview</p>
+
+                {receiptsLoading ? (
+                  <p className="mt-3 font-sans text-sm text-white/80">Loading your receipts…</p>
+                ) : null}
+
+                {!receiptsLoading && receipts.length === 0 ? (
+                  <p className="mt-3 font-mono text-sm text-[#D8A694]">&gt; no receipts generated yet_</p>
+                ) : null}
+
+                {!receiptsLoading && receipts.length > 0 ? (
+                  <div className="mt-4 space-y-3">
+                    {receipts.map((receipt) => (
+                      <details key={receipt.id} className="rounded-[1rem] border border-white/20 bg-white/10 p-4">
+                        <summary className="cursor-pointer font-sans text-sm font-semibold text-white">
+                          {receipt.receipt_date} · {receipt.focus_time_minutes}m focus
+                        </summary>
+                        <div className="mt-4 rounded-[1rem] border border-white/20 bg-[#754B4D]/60 p-4">
+                          <p className="font-mono text-[11px] uppercase tracking-[0.3em] text-[#D8A694]/70">VEXA DAILY RECEIPT</p>
+                          <div className="mt-3 space-y-1 font-mono text-sm text-[#D8A694]">
+                            <p>Tasks: {receipt.tasks_completed_count} completed</p>
+                            <p>Focus: {Math.floor(receipt.focus_time_minutes / 60)}h {receipt.focus_time_minutes % 60}m</p>
+                            <p>Scroll: {receipt.scroll_time_minutes}m</p>
+                          </div>
+                          <div className="mt-4 space-y-2 font-sans text-sm text-white/80">
+                            {receipt.biggest_win ? <p><span className="text-[#D8A694]">Biggest win:</span> {receipt.biggest_win}</p> : null}
+                            {receipt.biggest_distraction ? <p><span className="text-[#D8A694]">Biggest distraction:</span> {receipt.biggest_distraction}</p> : null}
+                            {receipt.tomorrow_priority ? <p><span className="text-[#D8A694]">Tomorrow priority:</span> {receipt.tomorrow_priority}</p> : null}
+                            {receipt.ai_summary ? <p className="mt-3 text-white/90">{receipt.ai_summary}</p> : null}
+                          </div>
+                        </div>
+                      </details>
                     ))}
                   </div>
                 ) : null}
