@@ -57,7 +57,7 @@ function AuthPage({ onAuthenticated }: AuthPageProps) {
           </h1>
           <p className="mt-4 max-w-md font-sans text-sm text-white/80 sm:text-base">
             {mode === 'login'
-              ? 'Sign in to keep your tasks, focus sessions, and AI guidance in one place.'
+              ? 'Sign in to keep your tasks, focus sessions, and plans in one place.'
               : 'Start with a simple account and bring your plans into focus.'}
           </p>
         </div>

@@ -428,7 +428,7 @@ function Dashboard() {
     const maxFocusDay = focusValues.reduce((bestIndex, value, index, values) => (value > values[bestIndex] ? index : bestIndex), 0)
     const maxTaskDay = taskValues.reduce((bestIndex, value, index, values) => (value > values[bestIndex] ? index : bestIndex), 0)
 
-    // TODO: replace with real Claude-generated insight once AI Command Center is built.
+    // TODO: replace with a richer insight engine once the command center is expanded.
     if (focusValues[maxFocusDay] > 0 || taskValues[maxTaskDay] > 0) {
       setAnalyticsInsight(`Your strongest stretch was ${labels[maxFocusDay]} with ${focusValues[maxFocusDay]} focus minutes and ${taskValues[maxTaskDay]} completed tasks, which is a good sign that planning tomorrow's work helps the day feel lighter.`)
     } else {
@@ -798,7 +798,7 @@ function Dashboard() {
       summaryParts.push('A small win would make tomorrow feel easier.')
     }
 
-    // TODO: replace with real Claude-generated summary once AI Command Center is built.
+    // TODO: replace with a richer summary engine once the command center is expanded.
     const aiSummary = summaryParts.join(' ')
 
     const payload = {

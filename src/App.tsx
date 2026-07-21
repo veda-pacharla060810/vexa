@@ -35,7 +35,7 @@ function AppContent() {
           <div className="font-hand text-4xl text-[#D8A694]">VEXA</div>
           <h1 className="mt-4 font-serif text-4xl leading-tight sm:text-5xl">A calmer way to stay accountable.</h1>
           <p className="mt-4 max-w-xl font-sans text-base text-white/80">
-            Focus with intention, track your progress, and let AI guide your next step.
+            Focus with intention, track your progress, and keep your next step in sight.
           </p>
 
           <button
