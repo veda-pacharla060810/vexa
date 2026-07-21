@@ -86,7 +86,7 @@ type DailyReceipt = {
   created_at: string
 }
 
-type ViewMode = 'tasks' | 'calendar' | 'focus' | 'scroll' | 'receipt'
+type ViewMode = 'tasks' | 'calendar' | 'focus' | 'scroll' | 'receipt' | 'analytics'
 
 const focusQuotes = [
   'One task. Right now. That\'s it.',
@@ -166,6 +166,12 @@ function Dashboard() {
   const [receiptError, setReceiptError] = useState('')
   const [receipts, setReceipts] = useState<DailyReceipt[]>([])
   const [receiptsLoading, setReceiptsLoading] = useState(true)
+  const [analyticsFocusSeries, setAnalyticsFocusSeries] = useState<number[]>([])
+  const [analyticsScrollSeries, setAnalyticsScrollSeries] = useState<number[]>([])
+  const [analyticsTaskSeries, setAnalyticsTaskSeries] = useState<number[]>([])
+  const [analyticsLabels, setAnalyticsLabels] = useState<string[]>([])
+  const [analyticsInsight, setAnalyticsInsight] = useState('')
+  const [analyticsLoading, setAnalyticsLoading] = useState(true)
   const [calendarMonth, setCalendarMonth] = useState(() => {
     const today = new Date()
     return new Date(today.getFullYear(), today.getMonth(), 1)
@@ -280,11 +286,116 @@ function Dashboard() {
     setReceipts((data ?? []) as DailyReceipt[])
   }
 
+  const fetchAnalytics = async () => {
+    if (!user?.id) return
+
+    setAnalyticsLoading(true)
+    setAnalyticsInsight('')
+
+    const today = new Date()
+    const labels: string[] = []
+    const focusValues: number[] = []
+    const scrollValues: number[] = []
+    const taskValues: number[] = []
+
+    for (let index = 6; index >= 0; index -= 1) {
+      const date = new Date(today)
+      date.setDate(today.getDate() - index)
+      labels.push(date.toLocaleDateString('en-US', { weekday: 'short' }))
+      focusValues.push(0)
+      scrollValues.push(0)
+      taskValues.push(0)
+    }
+
+    const { data: focusRows, error: focusError } = await supabase
+      .from('focus_sessions')
+      .select('duration_minutes, started_at')
+      .eq('user_id', user.id)
+
+    if (focusError) {
+      setAnalyticsLoading(false)
+      return
+    }
+
+    const { data: scrollRows, error: scrollError } = await supabase
+      .from('scroll_sessions')
+      .select('duration_minutes, started_at')
+      .eq('user_id', user.id)
+
+    if (scrollError) {
+      setAnalyticsLoading(false)
+      return
+    }
+
+    const { data: taskRows, error: taskError } = await supabase
+      .from('tasks')
+      .select('completed, created_at')
+      .eq('user_id', user.id)
+
+    if (taskError) {
+      setAnalyticsLoading(false)
+      return
+    }
+
+    const focusLookup = new Map<string, number>()
+    ;(focusRows ?? []).forEach((row) => {
+      const key = formatDateKey(row.started_at)
+      const value = focusLookup.get(key) ?? 0
+      focusLookup.set(key, value + (row.duration_minutes ?? 0))
+    })
+
+    const scrollLookup = new Map<string, number>()
+    ;(scrollRows ?? []).forEach((row) => {
+      const key = formatDateKey(row.started_at)
+      const value = scrollLookup.get(key) ?? 0
+      scrollLookup.set(key, value + (row.duration_minutes ?? 0))
+    })
+
+    const taskLookup = new Map<string, number>()
+    ;(taskRows ?? []).forEach((row) => {
+      const key = formatDateKey(row.created_at)
+      const value = taskLookup.get(key) ?? 0
+      if (row.completed) {
+        taskLookup.set(key, value + 1)
+      }
+    })
+
+    const lastSevenDays = labels.map((_, index) => {
+      const date = new Date(today)
+      date.setDate(today.getDate() - (6 - index))
+      return formatDateKey(date)
+    })
+
+    lastSevenDays.forEach((dayKey, index) => {
+      focusValues[index] = focusLookup.get(dayKey) ?? 0
+      scrollValues[index] = scrollLookup.get(dayKey) ?? 0
+      taskValues[index] = taskLookup.get(dayKey) ?? 0
+    })
+
+    setAnalyticsFocusSeries(focusValues)
+    setAnalyticsScrollSeries(scrollValues)
+    setAnalyticsTaskSeries(taskValues)
+    setAnalyticsLabels(labels)
+
+    const maxFocusDay = focusValues.reduce((bestIndex, value, index, values) => (value > values[bestIndex] ? index : bestIndex), 0)
+    const maxTaskDay = taskValues.reduce((bestIndex, value, index, values) => (value > values[bestIndex] ? index : bestIndex), 0)
+
+    // TODO: replace with real Claude-generated insight once AI Command Center is built.
+    if (focusValues[maxFocusDay] > 0 || taskValues[maxTaskDay] > 0) {
+      setAnalyticsInsight(`Your strongest stretch was ${labels[maxFocusDay]} with ${focusValues[maxFocusDay]} focus minutes and ${taskValues[maxTaskDay]} completed tasks, which is a good sign that planning tomorrow's work helps the day feel lighter.`)
+    } else {
+      setAnalyticsInsight('Start logging a little more each day and the trends will begin to speak clearly.')
+    }
+
+    setAnalyticsLoading(false)
+  }
+
   useEffect(() => {
     void fetchTasks()
     void fetchEvents()
     void fetchScrollSessions()
     void fetchReceipts()
+    void fetchAnalytics()
   }, [user?.id])
 
   const handleTaskSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
@@ -913,6 +1024,13 @@ function Dashboard() {
               >
                 Receipt
               </button>
+              <button
+                type="button"
+                onClick={() => setView('analytics')}
+                className={`rounded-full px-4 py-2 font-sans text-sm ${view === 'analytics' ? 'bg-[#D8A694] text-[#754B4D]' : 'text-white/80'}`}
+              >
+                Analytics
+              </button>
             </div>
 
             <button
@@ -1215,6 +1333,74 @@ function Dashboard() {
                   </div>
                 ) : null}
               </div>
+            </div>
+          </div>
+        ) : view === 'analytics' ? (
+          <div className="mt-6 rounded-[1.5rem] border border-white/20 bg-[#754B4D]/70 p-4 shadow-inner">
+            <div className="rounded-[1.25rem] border border-white/20 bg-white/10 p-6">
+              <p className="font-mono text-xs uppercase tracking-[0.3em] text-[#D8A694]/70">&gt; analytics_dashboard</p>
+              <h2 className="mt-3 font-serif text-2xl text-white">Productivity patterns</h2>
+              <p className="mt-2 font-sans text-sm text-white/80">Simple weekly signals for focus, scroll, and task flow.</p>
+
+              {analyticsLoading ? (
+                <p className="mt-6 font-sans text-sm text-white/80">Loading your trends…</p>
+              ) : null}
+
+              {!analyticsLoading && analyticsFocusSeries.every((value) => value === 0) && analyticsScrollSeries.every((value) => value === 0) && analyticsTaskSeries.every((value) => value === 0) ? (
+                <p className="mt-6 font-mono text-sm text-[#D8A694]">&gt; insufficient_data. keep logging to unlock trends_</p>
+              ) : null}
+
+              {!analyticsLoading && (analyticsFocusSeries.some((value) => value > 0) || analyticsScrollSeries.some((value) => value > 0) || analyticsTaskSeries.some((value) => value > 0)) ? (
+                <div className="mt-6 space-y-6">
+                  <div className="rounded-[1.25rem] border border-white/20 bg-[#754B4D]/60 p-4">
+                    <p className="font-sans text-sm font-semibold text-[#D8A694]">Focus minutes</p>
+                    <div className="mt-4 flex items-end gap-2">
+                      {analyticsFocusSeries.map((value, index) => (
+                        <div key={`${analyticsLabels[index]}-focus`} className="flex flex-1 flex-col items-center gap-2">
+                          <div className="flex h-36 w-full items-end rounded-[0.75rem] border border-white/10 bg-[#754B4D]/80 p-1">
+                            <div className="w-full rounded-[0.6rem] bg-[#A86A65]" style={{ height: `${Math.max(8, (value / Math.max(...analyticsFocusSeries, 1)) * 100)}%` }} />
+                          </div>
+                          <span className="font-mono text-[11px] uppercase tracking-[0.2em] text-[#D8A694]">{analyticsLabels[index]}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="rounded-[1.25rem] border border-white/20 bg-[#754B4D]/60 p-4">
+                    <p className="font-sans text-sm font-semibold text-[#D8A694]">Scroll minutes</p>
+                    <div className="mt-4 flex items-end gap-2">
+                      {analyticsScrollSeries.map((value, index) => (
+                        <div key={`${analyticsLabels[index]}-scroll`} className="flex flex-1 flex-col items-center gap-2">
+                          <div className="flex h-36 w-full items-end rounded-[0.75rem] border border-white/10 bg-[#754B4D]/80 p-1">
+                            <div className="w-full rounded-[0.6rem] bg-[#AB8882]" style={{ height: `${Math.max(8, (value / Math.max(...analyticsScrollSeries, 1)) * 100)}%` }} />
+                          </div>
+                          <span className="font-mono text-[11px] uppercase tracking-[0.2em] text-[#D8A694]">{analyticsLabels[index]}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="rounded-[1.25rem] border border-white/20 bg-[#754B4D]/60 p-4">
+                    <p className="font-sans text-sm font-semibold text-[#D8A694]">Tasks completed</p>
+                    <div className="mt-4 flex items-end gap-2">
+                      {analyticsTaskSeries.map((value, index) => (
+                        <div key={`${analyticsLabels[index]}-tasks`} className="flex flex-1 flex-col items-center gap-2">
+                          <div className="flex h-36 w-full items-end rounded-[0.75rem] border border-white/10 bg-[#754B4D]/80 p-1">
+                            <div className="w-full rounded-[0.6rem] bg-[#D8A694]" style={{ height: `${Math.max(8, (value / Math.max(...analyticsTaskSeries, 1)) * 100)}%` }} />
+                          </div>
+                          <span className="font-mono text-[11px] uppercase tracking-[0.2em] text-[#D8A694]">{analyticsLabels[index]}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              ) : null}
+
+              {analyticsInsight ? (
+                <div className="mt-6 rounded-[1.25rem] border border-white/20 bg-white/10 p-4 font-sans text-sm text-white/80">
+                  {analyticsInsight}
+                </div>
+              ) : null}
             </div>
           </div>
         ) : view === 'tasks' ? (
