@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react'
 import { AuthProvider, useAuth } from './context/AuthContext'
 import AuthPage from './pages/AuthPage'
+import Dashboard from './pages/Dashboard'
 
 function AppContent() {
-  const { user, loading, signOut } = useAuth()
+  const { user, loading } = useAuth()
   const [showAuth, setShowAuth] = useState(false)
 
   useEffect(() => {
@@ -46,25 +47,7 @@ function AppContent() {
     )
   }
 
-  return (
-    <div className="min-h-screen bg-[#754B4D] px-4 py-8 text-[#D8A694] sm:px-6 lg:px-8">
-      <div className="mx-auto flex max-w-3xl flex-col rounded-[2rem] border border-white/20 bg-white/10 p-8 shadow-2xl backdrop-blur-xl">
-        <p className="font-hand text-3xl">VEXA</p>
-        <h1 className="mt-4 font-serif text-4xl">Welcome back.</h1>
-        <p className="mt-3 font-sans text-base text-white/80">
-          Your account is ready. The dashboard will arrive in the next phase.
-        </p>
-
-        <button
-          type="button"
-          onClick={() => signOut()}
-          className="mt-8 w-fit rounded-2xl border border-white/30 bg-white/20 px-5 py-3 font-sans text-sm font-semibold text-white shadow-lg backdrop-blur transition hover:bg-white/30"
-        >
-          Sign out
-        </button>
-      </div>
-    </div>
-  )
+  return <Dashboard />
 }
 
 function App() {
