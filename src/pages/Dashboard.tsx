@@ -59,7 +59,7 @@ type EventFormState = {
   subject: string
 }
 
-type ViewMode = 'tasks' | 'calendar'
+type ViewMode = 'tasks' | 'calendar' | 'focus'
 
 const initialTaskFormState: TaskFormState = {
   title: '',
@@ -95,6 +95,15 @@ function Dashboard() {
   const [eventsError, setEventsError] = useState('')
   const [eventFormState, setEventFormState] = useState<EventFormState>(initialEventFormState)
   const [eventSubmitting, setEventSubmitting] = useState(false)
+  const [focusActive, setFocusActive] = useState(false)
+  const [focusSessionId, setFocusSessionId] = useState<string | null>(null)
+  const [focusTaskId, setFocusTaskId] = useState('')
+  const [focusTimeSeconds, setFocusTimeSeconds] = useState(25 * 60)
+  const [focusElapsedSeconds, setFocusElapsedSeconds] = useState(0)
+  const [focusIsPaused, setFocusIsPaused] = useState(false)
+  const [focusLoading, setFocusLoading] = useState(false)
+  const [focusError, setFocusError] = useState('')
+  const [focusCompleteRequested, setFocusCompleteRequested] = useState(false)
   const [calendarMonth, setCalendarMonth] = useState(() => {
     const today = new Date()
     return new Date(today.getFullYear(), today.getMonth(), 1)
@@ -312,6 +321,9 @@ function Dashboard() {
     }
   }, [tasks])
 
+  const focusTaskOptions = useMemo(() => tasks.filter((task) => !task.completed), [tasks])
+  const selectedFocusTask = focusTaskOptions.find((task) => task.id === focusTaskId) ?? null
+
   const calendarDays = useMemo(() => getMonthGrid(calendarMonth), [calendarMonth])
 
   const selectedDayKey = selectedDate ?? formatDateKey(new Date())
@@ -348,6 +360,173 @@ function Dashboard() {
     })
   }
 
+  if (focusActive) {
+    return (
+      <div className="min-h-screen bg-[#754B4D] px-4 py-8 text-[#D8A694] sm:px-6 lg:px-8">
+        <div className="mx-auto flex min-h-[calc(100vh-4rem)] max-w-4xl flex-col items-center justify-center rounded-[2rem] border border-white/20 bg-[#754B4D]/95 p-6 shadow-2xl backdrop-blur-xl sm:p-8">
+          <div className="w-full max-w-2xl rounded-[2rem] border border-white/20 bg-white/10 p-8 text-center shadow-inner">
+            <p className="font-mono text-[10px] uppercase tracking-[0.4em] text-[#D8A694]/70">&gt; focus_mode.exe</p>
+            <p className="mt-2 font-mono text-[10px] uppercase tracking-[0.4em] text-[#D8A694]/70">&gt; distractions paused</p>
+            <p className="mt-2 font-mono text-[10px] uppercase tracking-[0.4em] text-[#D8A694]/70">&gt; timer initialized</p>
+
+            <div className="mt-8 rounded-[1.5rem] border border-white/20 bg-[#754B4D]/70 p-6 shadow-inner">
+              <p className="font-sans text-sm uppercase tracking-[0.3em] text-[#D8A694]/70">Current task</p>
+              <h2 className="mt-2 font-serif text-3xl text-white">{selectedFocusTask ? selectedFocusTask.title : 'General focus'}</h2>
+              <p className="mt-4 font-mono text-xs uppercase tracking-[0.3em] text-[#D8A694]/70">{focusIsPaused ? 'paused' : 'in flow'}</p>
+              <div className="mt-6 font-serif text-7xl font-semibold tracking-[0.2em] text-white sm:text-8xl">
+                {formatCountdown(focusTimeSeconds)}
+              </div>
+            </div>
+
+            <div className="mt-8 flex flex-wrap items-center justify-center gap-3">
+              <button
+                type="button"
+                onClick={() => setFocusIsPaused((current) => !current)}
+                className="rounded-2xl border border-white/30 bg-white/20 px-5 py-3 font-sans text-sm font-semibold text-white shadow-lg backdrop-blur transition hover:bg-white/30"
+              >
+                {focusIsPaused ? 'Resume' : 'Pause'}
+              </button>
+              <button
+                type="button"
+                onClick={() => void completeFocusSession()}
+                className="rounded-2xl border border-[#D8A694]/40 bg-[#D8A694]/20 px-5 py-3 font-sans text-sm font-semibold text-white shadow-lg backdrop-blur transition hover:bg-[#D8A694]/30"
+              >
+                Complete
+              </button>
+            </div>
+
+            {focusError ? (
+              <div className="mt-6 rounded-2xl border border-[#D8A694]/30 bg-[#A86A65]/40 px-4 py-3 font-sans text-sm text-white">
+                {focusError}
+              </div>
+            ) : null}
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  const startFocusSession = async () => {
+    if (!user?.id) return
+
+    setFocusError('')
+    setFocusLoading(true)
+
+    const startedAt = new Date().toISOString()
+    const { data: newSession, error } = await supabase
+      .from('focus_sessions')
+      .insert({
+        user_id: user.id,
+        task_id: focusTaskId || null,
+        started_at: startedAt,
+      })
+      .select()
+      .single()
+
+    setFocusLoading(false)
+
+    if (error || !newSession) {
+      setFocusError(`The focus session could not be started: ${error?.message ?? 'No session returned.'}. Please try again.`)
+      return
+    }
+
+    setFocusSessionId(newSession.id)
+    setFocusActive(true)
+    setFocusIsPaused(false)
+    setFocusTimeSeconds(25 * 60)
+    setFocusElapsedSeconds(0)
+    setFocusCompleteRequested(false)
+    setView('focus')
+  }
+
+  const completeFocusSession = async () => {
+    if (!user?.id || !focusSessionId) {
+      setFocusActive(false)
+      setFocusIsPaused(false)
+      setFocusTimeSeconds(25 * 60)
+      setFocusElapsedSeconds(0)
+      setFocusSessionId(null)
+      setFocusCompleteRequested(false)
+      setView('tasks')
+      return
+    }
+
+    const durationMinutes = Math.max(1, Math.round(focusElapsedSeconds / 60))
+    const endedAt = new Date().toISOString()
+
+    const { error: sessionError } = await supabase
+      .from('focus_sessions')
+      .update({ ended_at: endedAt, duration_minutes: durationMinutes })
+      .eq('id', focusSessionId)
+      .eq('user_id', user.id)
+
+    if (sessionError) {
+      setFocusError(`The focus session could not be completed: ${sessionError.message}. Please try again.`)
+      return
+    }
+
+    if (focusTaskId) {
+      const { data: taskRow, error: taskLookupError } = await supabase
+        .from('tasks')
+        .select('actual_focus_minutes')
+        .eq('id', focusTaskId)
+        .single()
+
+      if (!taskLookupError && taskRow) {
+        const nextMinutes = (taskRow.actual_focus_minutes ?? 0) + durationMinutes
+        const { error: taskUpdateError } = await supabase.from('tasks').update({ actual_focus_minutes: nextMinutes }).eq('id', focusTaskId)
+
+        if (!taskUpdateError) {
+          setTasks((currentTasks) => currentTasks.map((task) => (task.id === focusTaskId ? { ...task, actual_focus_minutes: nextMinutes } : task)))
+        }
+      }
+    }
+
+    setFocusActive(false)
+    setFocusIsPaused(false)
+    setFocusTimeSeconds(25 * 60)
+    setFocusElapsedSeconds(0)
+    setFocusSessionId(null)
+    setFocusCompleteRequested(false)
+    setView('tasks')
+  }
+
+  useEffect(() => {
+    if (!focusActive || focusIsPaused) return
+
+    const intervalId = window.setInterval(() => {
+      setFocusTimeSeconds((current) => current - 1)
+      setFocusElapsedSeconds((current) => current + 1)
+    }, 1000)
+
+    return () => window.clearInterval(intervalId)
+  }, [focusActive, focusIsPaused])
+
+  useEffect(() => {
+    if (!focusActive || focusTimeSeconds > 0 || focusCompleteRequested) return
+
+    setFocusCompleteRequested(true)
+    void completeFocusSession()
+  }, [focusActive, focusTimeSeconds, focusCompleteRequested])
+
+  useEffect(() => {
+    if (!focusActive) return
+
+    const handleBeforeUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault()
+      event.returnValue = ''
+    }
+
+    window.addEventListener('beforeunload', handleBeforeUnload)
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload)
+  }, [focusActive])
+
+  useEffect(() => {
+    if (focusTaskId && !focusTaskOptions.some((task) => task.id === focusTaskId)) {
+      setFocusTaskId('')
+    }
+  }, [focusTaskId, focusTaskOptions])
+
   return (
     <div className="min-h-screen bg-[#754B4D] px-4 py-8 text-[#D8A694] sm:px-6 lg:px-8">
       <div className="mx-auto flex max-w-4xl flex-col rounded-[2rem] border border-white/20 bg-white/10 p-6 shadow-2xl backdrop-blur-xl sm:p-8">
@@ -373,6 +552,13 @@ function Dashboard() {
               >
                 Calendar
               </button>
+              <button
+                type="button"
+                onClick={() => setView('focus')}
+                className={`rounded-full px-4 py-2 font-sans text-sm ${view === 'focus' ? 'bg-[#D8A694] text-[#754B4D]' : 'text-white/80'}`}
+              >
+                Focus
+              </button>
             </div>
 
             <button
@@ -385,7 +571,53 @@ function Dashboard() {
           </div>
         </div>
 
-        {view === 'tasks' ? (
+        {view === 'focus' ? (
+          <div className="mt-6 rounded-[1.5rem] border border-white/20 bg-[#754B4D]/70 p-4 shadow-inner">
+            <div className="rounded-[1.25rem] border border-white/20 bg-white/10 p-6">
+              <p className="font-mono text-xs uppercase tracking-[0.3em] text-[#D8A694]/70">&gt; enter_focus_mode</p>
+              <h2 className="mt-3 font-serif text-2xl text-white">Ready for a distraction-free session?</h2>
+              <p className="mt-2 font-sans text-sm text-white/80">Pick a task to anchor your attention, or choose general focus for a free-flow block.</p>
+
+              <div className="mt-6 grid gap-4 sm:grid-cols-[1fr_auto] sm:items-end">
+                <div>
+                  <label className="mb-2 block font-sans text-sm text-[#D8A694]">Focus target</label>
+                  <select
+                    value={focusTaskId}
+                    onChange={(event) => setFocusTaskId(event.target.value)}
+                    className="w-full rounded-2xl border border-white/20 bg-white/20 px-3 py-2 font-sans text-sm text-white outline-none focus:border-[#D8A694]"
+                  >
+                    <option value="" className="text-[#754B4D]">No task selected</option>
+                    {focusTaskOptions.map((task) => (
+                      <option key={task.id} value={task.id} className="text-[#754B4D]">
+                        {task.title}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => void startFocusSession()}
+                  disabled={focusLoading}
+                  className="rounded-2xl border border-white/30 bg-white/20 px-4 py-2 font-sans text-sm font-semibold text-white shadow-lg backdrop-blur transition hover:bg-white/30 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {focusLoading ? 'Starting…' : 'Start focus'}
+                </button>
+              </div>
+
+              {focusError ? (
+                <div className="mt-4 rounded-2xl border border-[#D8A694]/30 bg-[#A86A65]/40 px-4 py-3 font-sans text-sm text-white">
+                  {focusError}
+                </div>
+              ) : null}
+
+              <div className="mt-4 rounded-2xl border border-white/20 bg-[#754B4D]/60 p-4 font-sans text-sm text-white/75">
+                <p>Default length: 25 minutes.</p>
+                <p className="mt-1">This pass keeps the timer simple and distraction-free, with pause and completion controls built in.</p>
+              </div>
+            </div>
+          </div>
+        ) : view === 'tasks' ? (
           <>
             <div className="mt-6 rounded-[1.5rem] border border-white/20 bg-[#754B4D]/70 p-4 shadow-inner">
               <form className="space-y-4" onSubmit={handleTaskSubmit}>
@@ -928,6 +1160,13 @@ function formatLongDate(value: string) {
   const date = new Date(`${value}T00:00:00`)
   if (Number.isNaN(date.getTime())) return value
   return date.toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric', year: 'numeric' })
+}
+
+function formatCountdown(totalSeconds: number) {
+  const safeSeconds = Math.max(0, totalSeconds)
+  const minutes = Math.floor(safeSeconds / 60)
+  const seconds = safeSeconds % 60
+  return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`
 }
 
 function formatDate(value: string) {
