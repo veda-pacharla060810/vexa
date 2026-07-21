@@ -72,6 +72,16 @@ type ScrollSession = {
   created_at: string
 }
 
+type FocusSession = {
+  id: string
+  user_id: string
+  task_id: string | null
+  started_at: string
+  ended_at: string | null
+  duration_minutes: number | null
+  created_at: string | null
+}
+
 type DailyReceipt = {
   id: string
   user_id: string
@@ -86,7 +96,7 @@ type DailyReceipt = {
   created_at: string
 }
 
-type ViewMode = 'tasks' | 'calendar' | 'focus' | 'scroll' | 'receipt' | 'analytics'
+type ViewMode = 'tasks' | 'calendar' | 'focus' | 'scroll' | 'receipt' | 'analytics' | 'productivity-dna' | 'parallel-self'
 
 const focusQuotes = [
   'One task. Right now. That\'s it.',
@@ -214,6 +224,9 @@ function Dashboard() {
   const [analyticsLabels, setAnalyticsLabels] = useState<string[]>([])
   const [analyticsInsight, setAnalyticsInsight] = useState('')
   const [analyticsLoading, setAnalyticsLoading] = useState(true)
+  const [focusSessions, setFocusSessions] = useState<FocusSession[]>([])
+  const [parallelFocusIncrease, setParallelFocusIncrease] = useState(0)
+  const [parallelScrollDecrease, setParallelScrollDecrease] = useState(0)
   const [calendarMonth, setCalendarMonth] = useState(() => {
     const today = new Date()
     return new Date(today.getFullYear(), today.getMonth(), 1)
@@ -310,6 +323,22 @@ function Dashboard() {
     }
 
     setScrollSessions((data ?? []) as ScrollSession[])
+  }
+
+  const fetchFocusSessions = async () => {
+    if (!user?.id) return
+
+    const { data, error } = await supabase
+      .from('focus_sessions')
+      .select('*')
+      .eq('user_id', user.id)
+      .order('started_at', { ascending: false })
+
+    if (error) {
+      return
+    }
+
+    setFocusSessions((data ?? []) as FocusSession[])
   }
 
   const fetchReceipts = async () => {
@@ -442,9 +471,159 @@ function Dashboard() {
     void fetchTasks()
     void fetchEvents()
     void fetchScrollSessions()
+    void fetchFocusSessions()
     void fetchReceipts()
     void fetchAnalytics()
   }, [user?.id])
+
+  const productivityMetrics = useMemo(() => {
+    const now = new Date()
+    const rangeStart = new Date(now)
+    rangeStart.setDate(now.getDate() - 29)
+
+    const relevantFocusSessions = focusSessions.filter((session) => {
+      const startedAt = new Date(session.started_at)
+      return !Number.isNaN(startedAt.getTime()) && startedAt >= rangeStart
+    })
+
+    const relevantScrollSessions = scrollSessions.filter((session) => {
+      const startedAt = new Date(session.started_at)
+      return !Number.isNaN(startedAt.getTime()) && startedAt >= rangeStart
+    })
+
+    const relevantTasks = tasks.filter((task) => {
+      const createdAt = new Date(task.created_at)
+      return !Number.isNaN(createdAt.getTime()) && createdAt >= rangeStart
+    })
+
+    const hourTotals = Array.from({ length: 24 }, (_, hour) => ({ hour, minutes: 0 }))
+    relevantFocusSessions.forEach((session) => {
+      const startedAt = new Date(session.started_at)
+      if (Number.isNaN(startedAt.getTime())) return
+      const hour = startedAt.getHours()
+      hourTotals[hour].minutes += session.duration_minutes ?? 0
+    })
+
+    const sortedHours = [...hourTotals].sort((left, right) => right.minutes - left.minutes)
+    const topHours = sortedHours.slice(0, 2).filter((entry) => entry.minutes > 0)
+
+    const averageSessionLength = relevantFocusSessions.length > 0
+      ? relevantFocusSessions.reduce((total, session) => total + (session.duration_minutes ?? 0), 0) / relevantFocusSessions.length
+      : null
+
+    const deadlineTasks = relevantTasks.filter((task) => task.deadline)
+    const completedBeforeDeadline = deadlineTasks.filter((task) => task.completed).length
+    const completedAfterDeadline = deadlineTasks.filter((task) => {
+      const deadlineValue = task.deadline
+      if (!task.completed || !deadlineValue) return false
+      const deadline = new Date(deadlineValue)
+      return !Number.isNaN(deadline.getTime()) && deadline < now
+    }).length
+    const neverCompleted = deadlineTasks.filter((task) => !task.completed).length
+
+    const reasonCounts = new Map<string, number>()
+    relevantScrollSessions.forEach((session) => {
+      if (!session.reason) return
+      reasonCounts.set(session.reason, (reasonCounts.get(session.reason) ?? 0) + 1)
+    })
+    const commonDistraction = Array.from(reasonCounts.entries()).sort((left, right) => right[1] - left[1])[0]?.[0] ?? null
+
+    const planningGaps = relevantTasks
+      .filter((task) => task.deadline && task.created_at)
+      .map((task) => {
+        const createdAt = new Date(task.created_at)
+        const deadlineValue = task.deadline
+        if (!deadlineValue) return null
+        const deadline = new Date(deadlineValue)
+        if (Number.isNaN(createdAt.getTime()) || Number.isNaN(deadline.getTime())) return null
+        const diffDays = Math.round((deadline.getTime() - createdAt.getTime()) / (1000 * 60 * 60 * 24))
+        return Number.isFinite(diffDays) ? diffDays : null
+      })
+      .filter((value): value is number => value !== null)
+
+    const averagePlanningGap = planningGaps.length > 0 ? planningGaps.reduce((total, value) => total + value, 0) / planningGaps.length : null
+
+    let planningStyle = 'mixed'
+    // Thresholds chosen for a simple planning-style label: 14+ days = advance planner, 4-13 = mixed, under 4 = last-minute.
+    if (averagePlanningGap !== null) {
+      if (averagePlanningGap >= 14) {
+        planningStyle = 'advance planner'
+      } else if (averagePlanningGap < 4) {
+        planningStyle = 'last-minute'
+      }
+    }
+
+    return {
+      windowDays: Math.max(1, Math.min(30, Array.from(new Set([
+        ...relevantFocusSessions.map((session) => formatDateKey(session.started_at)),
+        ...relevantScrollSessions.map((session) => formatDateKey(session.started_at)),
+        ...relevantTasks.map((task) => formatDateKey(task.created_at)),
+      ].filter(Boolean))).length)),
+      topHours,
+      averageSessionLength,
+      deadlineTasks,
+      completedBeforeDeadline,
+      completedAfterDeadline,
+      neverCompleted,
+      commonDistraction,
+      averagePlanningGap,
+      planningStyle,
+    }
+  }, [focusSessions, scrollSessions, tasks])
+
+  const parallelMetrics = useMemo(() => {
+    const now = new Date()
+    const rangeStart = new Date(now)
+    rangeStart.setDate(now.getDate() - 13)
+
+    const relevantFocusSessions = focusSessions.filter((session) => {
+      const startedAt = new Date(session.started_at)
+      return !Number.isNaN(startedAt.getTime()) && startedAt >= rangeStart
+    })
+
+    const relevantScrollSessions = scrollSessions.filter((session) => {
+      const startedAt = new Date(session.started_at)
+      return !Number.isNaN(startedAt.getTime()) && startedAt >= rangeStart
+    })
+
+    const focusDayTotals = new Map<string, number>()
+    relevantFocusSessions.forEach((session) => {
+      const dayKey = formatDateKey(session.started_at)
+      focusDayTotals.set(dayKey, (focusDayTotals.get(dayKey) ?? 0) + (session.duration_minutes ?? 0))
+    })
+
+    const scrollDayTotals = new Map<string, number>()
+    relevantScrollSessions.forEach((session) => {
+      const dayKey = formatDateKey(session.started_at)
+      scrollDayTotals.set(dayKey, (scrollDayTotals.get(dayKey) ?? 0) + (session.duration_minutes ?? 0))
+    })
+
+    const focusDays = Array.from(focusDayTotals.keys())
+    const scrollDays = Array.from(scrollDayTotals.keys())
+    const dayCount = Math.max(1, Math.min(14, new Set([...focusDays, ...scrollDays]).size))
+
+    const focusAverageMinutesPerDay = focusDays.length > 0 ? Array.from(focusDayTotals.values()).reduce((total, value) => total + value, 0) / focusDays.length : null
+    const scrollAverageMinutesPerDay = scrollDays.length > 0 ? Array.from(scrollDayTotals.values()).reduce((total, value) => total + value, 0) / scrollDays.length : null
+
+    const focusProjectedHours = focusAverageMinutesPerDay !== null ? (focusAverageMinutesPerDay * 30) / 60 : null
+    const scrollProjectedHours = scrollAverageMinutesPerDay !== null ? (scrollAverageMinutesPerDay * 30) / 60 : null
+
+    const improvedFocusAverage = focusAverageMinutesPerDay !== null ? focusAverageMinutesPerDay + parallelFocusIncrease : null
+    const improvedScrollAverage = scrollAverageMinutesPerDay !== null ? Math.max(0, (scrollAverageMinutesPerDay - parallelScrollDecrease)) : null
+
+    const improvedFocusProjectedHours = improvedFocusAverage !== null ? (improvedFocusAverage * 30) / 60 : null
+    const improvedScrollProjectedHours = improvedScrollAverage !== null ? (improvedScrollAverage * 30) / 60 : null
+
+    return {
+      dayCount,
+      focusAverageMinutesPerDay,
+      scrollAverageMinutesPerDay,
+      focusProjectedHours,
+      scrollProjectedHours,
+      improvedFocusProjectedHours,
+      improvedScrollProjectedHours,
+    }
+  }, [focusSessions, scrollSessions, parallelFocusIncrease, parallelScrollDecrease])
 
   const handleTaskSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault()
@@ -1035,6 +1214,20 @@ function Dashboard() {
               >
                 Analytics
               </button>
+              <button
+                type="button"
+                onClick={() => setView('productivity-dna')}
+                className={`rounded-full px-4 py-2 font-sans text-sm ${view === 'productivity-dna' ? 'bg-[#D8A694] text-[#754B4D]' : 'text-white/80'}`}
+              >
+                Productivity DNA
+              </button>
+              <button
+                type="button"
+                onClick={() => setView('parallel-self')}
+                className={`rounded-full px-4 py-2 font-sans text-sm ${view === 'parallel-self' ? 'bg-[#D8A694] text-[#754B4D]' : 'text-white/80'}`}
+              >
+                Parallel Self
+              </button>
             </div>
 
             <button
@@ -1405,6 +1598,153 @@ function Dashboard() {
                   {analyticsInsight}
                 </div>
               ) : null}
+            </div>
+          </div>
+        ) : view === 'productivity-dna' ? (
+          <div className="mt-6 rounded-[1.5rem] border border-white/20 bg-[#754B4D]/70 p-4 shadow-inner">
+            <div className="rounded-[1.25rem] border border-white/20 bg-white/10 p-6">
+              <p className="font-mono text-xs uppercase tracking-[0.3em] text-[#D8A694]/70">&gt; productivity_dna</p>
+              <h2 className="mt-3 font-serif text-2xl text-white">Productivity DNA</h2>
+              <p className="mt-2 font-sans text-sm text-white/80">
+                Based on your last {productivityMetrics.windowDays} day{productivityMetrics.windowDays === 1 ? '' : 's'} of logged activity.
+              </p>
+
+              <div className="mt-6 grid gap-4 lg:grid-cols-2">
+                <div className="rounded-[1.25rem] border border-white/20 bg-[#754B4D]/60 p-4">
+                  <p className="font-sans text-sm font-semibold text-[#D8A694]">Strongest focus hours</p>
+                  {productivityMetrics.topHours.length > 0 ? (
+                    <>
+                      <div className="mt-4 flex h-28 items-end gap-2">
+                        {Array.from({ length: 24 }, (_, hour) => {
+                          const value = productivityMetrics.topHours.find((entry) => entry.hour === hour)?.minutes ?? 0
+                          const maxValue = Math.max(1, ...productivityMetrics.topHours.map((entry) => entry.minutes))
+                          const height = value > 0 ? Math.max(10, (value / maxValue) * 100) : 8
+                          return (
+                            <div key={hour} className="flex flex-1 flex-col items-center justify-end gap-2">
+                              <div className="w-full rounded-[0.5rem] border border-white/10 bg-[#754B4D]/80 p-1">
+                                <div className="w-full rounded-[0.4rem] bg-[#D8A694]" style={{ height: `${height}%` }} />
+                              </div>
+                              <span className="font-mono text-[10px] uppercase tracking-[0.2em] text-[#D8A694]">{hour}</span>
+                            </div>
+                          )
+                        })}
+                      </div>
+                      <p className="mt-3 font-sans text-sm text-white/80">
+                        Peak hours: {productivityMetrics.topHours.map((entry) => `${String(entry.hour).padStart(2, '0')}:00`).join(', ')}
+                      </p>
+                    </>
+                  ) : (
+                    <p className="mt-4 font-mono text-sm text-[#D8A694]">&gt; not enough data yet_</p>
+                  )}
+                </div>
+
+                <div className="rounded-[1.25rem] border border-white/20 bg-[#754B4D]/60 p-4">
+                  <p className="font-sans text-sm font-semibold text-[#D8A694]">Average session length</p>
+                  {productivityMetrics.averageSessionLength !== null ? (
+                    <p className="mt-4 font-serif text-4xl text-white">{productivityMetrics.averageSessionLength.toFixed(0)}m</p>
+                  ) : (
+                    <p className="mt-4 font-mono text-sm text-[#D8A694]">&gt; not enough data yet_</p>
+                  )}
+                </div>
+
+                <div className="rounded-[1.25rem] border border-white/20 bg-[#754B4D]/60 p-4">
+                  <p className="font-sans text-sm font-semibold text-[#D8A694]">Task completion pattern</p>
+                  {productivityMetrics.deadlineTasks.length > 0 ? (
+                    <div className="mt-4 space-y-2 font-sans text-sm text-white/80">
+                      <p>Before deadline: {Math.round((productivityMetrics.completedBeforeDeadline / productivityMetrics.deadlineTasks.length) * 100)}%</p>
+                      <p>After deadline: {Math.round((productivityMetrics.completedAfterDeadline / productivityMetrics.deadlineTasks.length) * 100)}%</p>
+                      <p>Never completed: {Math.round((productivityMetrics.neverCompleted / productivityMetrics.deadlineTasks.length) * 100)}%</p>
+                    </div>
+                  ) : (
+                    <p className="mt-4 font-mono text-sm text-[#D8A694]">&gt; not enough data yet_</p>
+                  )}
+                </div>
+
+                <div className="rounded-[1.25rem] border border-white/20 bg-[#754B4D]/60 p-4">
+                  <p className="font-sans text-sm font-semibold text-[#D8A694]">Common distraction</p>
+                  {productivityMetrics.commonDistraction ? (
+                    <p className="mt-4 font-serif text-2xl text-white">{productivityMetrics.commonDistraction}</p>
+                  ) : (
+                    <p className="mt-4 font-mono text-sm text-[#D8A694]">&gt; not enough data yet_</p>
+                  )}
+                </div>
+              </div>
+
+              <div className="mt-4 rounded-[1.25rem] border border-white/20 bg-white/10 p-4">
+                <p className="font-sans text-sm font-semibold text-[#D8A694]">Planning style</p>
+                {productivityMetrics.averagePlanningGap !== null ? (
+                  <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
+                    <p className="font-serif text-2xl text-white">{productivityMetrics.planningStyle}</p>
+                    <p className="font-sans text-sm text-white/80">Average lead time: {productivityMetrics.averagePlanningGap.toFixed(0)} days</p>
+                  </div>
+                ) : (
+                  <p className="mt-3 font-mono text-sm text-[#D8A694]">&gt; not enough data yet_</p>
+                )}
+              </div>
+            </div>
+          </div>
+        ) : view === 'parallel-self' ? (
+          <div className="mt-6 rounded-[1.5rem] border border-white/20 bg-[#754B4D]/70 p-4 shadow-inner">
+            <div className="rounded-[1.25rem] border border-white/20 bg-white/10 p-6">
+              <p className="font-mono text-xs uppercase tracking-[0.3em] text-[#D8A694]/70">&gt; parallel_self</p>
+              <h2 className="mt-3 font-serif text-2xl text-white">Parallel Self</h2>
+              <p className="mt-2 font-sans text-sm text-white/80">
+                Based on the last {parallelMetrics.dayCount} day{parallelMetrics.dayCount === 1 ? '' : 's'} of logged focus and scroll activity.
+              </p>
+
+              {parallelMetrics.focusAverageMinutesPerDay === null || parallelMetrics.scrollAverageMinutesPerDay === null ? (
+                <p className="mt-6 font-mono text-sm text-[#D8A694]">&gt; insufficient_data. keep logging for at least a few more days to see a projection_</p>
+              ) : (
+                <>
+                  <div className="mt-6 grid gap-4 lg:grid-cols-2">
+                    <div className="rounded-[1.25rem] border border-white/20 bg-[#754B4D]/60 p-4">
+                      <p className="font-sans text-sm font-semibold text-[#D8A694]">If this continues</p>
+                      <div className="mt-4 space-y-2 font-sans text-sm text-white/80">
+                        <p>Focus: {(parallelMetrics.focusProjectedHours ?? 0).toFixed(1)} hours over 30 days</p>
+                        <p>Scroll: {(parallelMetrics.scrollProjectedHours ?? 0).toFixed(1)} hours over 30 days</p>
+                      </div>
+                    </div>
+
+                    <div className="rounded-[1.25rem] border border-white/20 bg-[#754B4D]/60 p-4">
+                      <p className="font-sans text-sm font-semibold text-[#D8A694]">If you improve</p>
+                      <div className="mt-4 space-y-2 font-sans text-sm text-white/80">
+                        <div>
+                          <label className="mb-2 block text-[#D8A694]">Focus increase (minutes/day)</label>
+                          <input
+                            type="number"
+                            min="0"
+                            value={parallelFocusIncrease}
+                            onChange={(event) => setParallelFocusIncrease(Number(event.target.value))}
+                            className="w-full rounded-2xl border border-white/20 bg-white/20 px-3 py-2 font-sans text-sm text-white outline-none focus:border-[#D8A694]"
+                          />
+                        </div>
+                        <div>
+                          <label className="mb-2 block text-[#D8A694]">Scroll decrease (minutes/day)</label>
+                          <input
+                            type="number"
+                            min="0"
+                            value={parallelScrollDecrease}
+                            onChange={(event) => setParallelScrollDecrease(Number(event.target.value))}
+                            className="w-full rounded-2xl border border-white/20 bg-white/20 px-3 py-2 font-sans text-sm text-white outline-none focus:border-[#D8A694]"
+                          />
+                        </div>
+                        <p className="pt-2">Focus: {(parallelMetrics.improvedFocusProjectedHours ?? 0).toFixed(1)} hours over 30 days</p>
+                        <p>Scroll: {(parallelMetrics.improvedScrollProjectedHours ?? 0).toFixed(1)} hours over 30 days</p>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="mt-4 rounded-[1.25rem] border border-white/20 bg-white/10 p-4 font-sans text-sm text-white/80">
+                    <p>
+                      That is roughly {Math.max(0, (parallelMetrics.improvedFocusProjectedHours ?? 0) - (parallelMetrics.focusProjectedHours ?? 0)).toFixed(1)} more focus hours over the next month, with scroll time reduced by about {Math.max(0, (parallelMetrics.scrollProjectedHours ?? 0) - (parallelMetrics.improvedScrollProjectedHours ?? 0)).toFixed(1)} hours.
+                    </p>
+                  </div>
+
+                  <p className="mt-4 font-sans text-xs text-white/60">
+                    This is a simple projection based on your recent averages, not a guarantee or a prediction of the future.
+                  </p>
+                </>
+              )}
             </div>
           </div>
         ) : view === 'tasks' ? (
