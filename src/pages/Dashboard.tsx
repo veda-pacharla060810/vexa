@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { Component, type ErrorInfo, type ReactNode, useEffect, useMemo, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../context/AuthContext'
 
@@ -121,6 +121,48 @@ const initialEventFormState: EventFormState = {
   subject: '',
 }
 
+type FocusModeErrorBoundaryProps = {
+  children: ReactNode
+}
+
+type FocusModeErrorBoundaryState = {
+  hasError: boolean
+  error: Error | null
+}
+
+class FocusModeErrorBoundary extends Component<FocusModeErrorBoundaryProps, FocusModeErrorBoundaryState> {
+  constructor(props: FocusModeErrorBoundaryProps) {
+    super(props)
+    this.state = { hasError: false, error: null }
+  }
+
+  static getDerivedStateFromError(error: Error) {
+    return { hasError: true, error }
+  }
+
+  componentDidCatch(error: Error, errorInfo: ErrorInfo) {
+    console.error('Focus Mode error boundary caught:', error, errorInfo)
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="flex min-h-screen items-center justify-center bg-[#754B4D] px-4 py-8 text-[#D8A694]">
+          <div className="max-w-2xl rounded-[2rem] border border-[#D8A694]/30 bg-[#754B4D]/90 p-6 text-left shadow-2xl">
+            <p className="font-mono text-xs uppercase tracking-[0.3em] text-[#D8A694]/70">&gt; focus_mode_error</p>
+            <p className="mt-4 font-sans text-sm text-white">Focus Mode error: {this.state.error?.message ?? 'Unknown error'}</p>
+            <pre className="mt-4 overflow-x-auto rounded-2xl border border-white/20 bg-black/20 p-4 font-mono text-xs text-[#D8A694]">
+              {this.state.error?.stack ?? 'No stack trace available.'}
+            </pre>
+          </div>
+        </div>
+      )
+    }
+
+    return this.props.children
+  }
+}
+
 function Dashboard() {
   const { user, signOut } = useAuth()
   const [view, setView] = useState<ViewMode>('tasks')
@@ -177,6 +219,12 @@ function Dashboard() {
     return new Date(today.getFullYear(), today.getMonth(), 1)
   })
   const [selectedDate, setSelectedDate] = useState(() => formatDateKey(new Date()))
+
+  useEffect(() => {
+    if (!import.meta.env.DEV || !window.location.search.includes('debugFocus=1')) return
+    setFocusActive(true)
+    setView('focus')
+  }, [])
 
   const fetchTasks = async () => {
     if (!user?.id) return
@@ -848,6 +896,16 @@ function Dashboard() {
   }, [focusActive, focusIsPaused])
 
   useEffect(() => {
+    if (!scrollActive || scrollReviewing) return
+
+    const intervalId = window.setInterval(() => {
+      setScrollElapsedSeconds((current) => current + 1)
+    }, 1000)
+
+    return () => window.clearInterval(intervalId)
+  }, [scrollActive, scrollReviewing])
+
+  useEffect(() => {
     if (!focusActive || focusTimeSeconds > 0 || focusCompleteRequested) return
 
     setFocusCompleteRequested(true)
@@ -871,112 +929,58 @@ function Dashboard() {
       setFocusTaskId('')
     }
   }, [focusTaskId, focusTaskOptions])
-
-  useEffect(() => {
-    if (!scrollActive || scrollReviewing) return
-
-    const intervalId = window.setInterval(() => {
-      setScrollElapsedSeconds((current) => current + 1)
-    }, 1000)
-
-    return () => window.clearInterval(intervalId)
-  }, [scrollActive, scrollReviewing])
 
   if (focusActive) {
     return (
-      <div className="min-h-screen bg-[#754B4D] px-4 py-8 text-[#D8A694] sm:px-6 lg:px-8">
-        <div className="mx-auto flex min-h-[calc(100vh-4rem)] max-w-4xl flex-col items-center justify-center rounded-[2rem] border border-white/20 bg-[#754B4D]/95 p-6 shadow-2xl backdrop-blur-xl sm:p-8">
-          <div className="w-full max-w-2xl rounded-[2rem] border border-white/20 bg-white/10 p-8 text-center shadow-inner">
-            <p className="font-mono text-[10px] uppercase tracking-[0.4em] text-[#D8A694]/70">&gt; focus_mode.exe</p>
-            <p className="mt-2 font-mono text-[10px] uppercase tracking-[0.4em] text-[#D8A694]/70">&gt; distractions paused</p>
-            <p className="mt-2 font-mono text-[10px] uppercase tracking-[0.4em] text-[#D8A694]/70">&gt; timer initialized</p>
+      <FocusModeErrorBoundary>
+        <div className="min-h-screen bg-[#754B4D] px-4 py-8 text-[#D8A694] sm:px-6 lg:px-8">
+          <div className="mx-auto flex min-h-[calc(100vh-4rem)] max-w-4xl flex-col items-center justify-center rounded-[2rem] border border-white/20 bg-[#754B4D]/95 p-6 shadow-2xl backdrop-blur-xl sm:p-8">
+            <div className="w-full max-w-2xl rounded-[2rem] border border-white/20 bg-white/10 p-8 text-center shadow-inner">
+              <p className="font-mono text-[10px] uppercase tracking-[0.4em] text-[#D8A694]/70">&gt; focus_mode.exe</p>
+              <p className="mt-2 font-mono text-[10px] uppercase tracking-[0.4em] text-[#D8A694]/70">&gt; distractions paused</p>
+              <p className="mt-2 font-mono text-[10px] uppercase tracking-[0.4em] text-[#D8A694]/70">&gt; timer initialized</p>
 
-            <div className="mt-8 rounded-[1.5rem] border border-white/20 bg-[#754B4D]/70 p-6 shadow-inner">
-              <p className="font-sans text-sm uppercase tracking-[0.3em] text-[#D8A694]/70">Current task</p>
-              <h2 className="mt-2 font-serif text-3xl text-white">{selectedFocusTask ? selectedFocusTask.title : 'General focus'}</h2>
-              <p className="mt-4 font-mono text-xs uppercase tracking-[0.3em] text-[#D8A694]/70">{focusIsPaused ? 'paused' : 'in flow'}</p>
-              <div className="mt-6 font-serif text-7xl font-semibold tracking-[0.2em] text-white sm:text-8xl">
-                {formatCountdown(focusTimeSeconds)}
+              <div className="mt-8 rounded-[1.5rem] border border-white/20 bg-[#754B4D]/70 p-6 shadow-inner">
+                <p className="font-sans text-sm uppercase tracking-[0.3em] text-[#D8A694]/70">Current task</p>
+                <h2 className="mt-2 font-serif text-3xl text-white">{selectedFocusTask ? selectedFocusTask.title : 'General focus'}</h2>
+                <p className="mt-4 font-mono text-xs uppercase tracking-[0.3em] text-[#D8A694]/70">{focusIsPaused ? 'paused' : 'in flow'}</p>
+                <div className="mt-6 font-serif text-7xl font-semibold tracking-[0.2em] text-white sm:text-8xl">
+                  {formatCountdown(focusTimeSeconds)}
+                </div>
               </div>
-            </div>
 
-            <p className="mt-6 max-w-xl font-hand text-xl leading-relaxed text-[#D8A694]/90 sm:text-2xl">
-              {focusQuote}
-            </p>
+              <p className="mt-6 max-w-xl font-hand text-xl leading-relaxed text-[#D8A694]/90 sm:text-2xl">
+                {focusQuote}
+              </p>
 
-            <div className="mt-8 flex flex-wrap items-center justify-center gap-3">
-              <button
-                type="button"
-                onClick={() => setFocusIsPaused((current) => !current)}
-                className="rounded-2xl border border-white/30 bg-white/20 px-5 py-3 font-sans text-sm font-semibold text-white shadow-lg backdrop-blur transition hover:bg-white/30"
-              >
-                {focusIsPaused ? 'Resume' : 'Pause'}
-              </button>
-              <button
-                type="button"
-                onClick={() => void completeFocusSession()}
-                className="rounded-2xl border border-[#D8A694]/40 bg-[#D8A694]/20 px-5 py-3 font-sans text-sm font-semibold text-white shadow-lg backdrop-blur transition hover:bg-[#D8A694]/30"
-              >
-                Complete
-              </button>
-            </div>
-
-            {focusError ? (
-              <div className="mt-6 rounded-2xl border border-[#D8A694]/30 bg-[#A86A65]/40 px-4 py-3 font-sans text-sm text-white">
-                {focusError}
+              <div className="mt-8 flex flex-wrap items-center justify-center gap-3">
+                <button
+                  type="button"
+                  onClick={() => setFocusIsPaused((current) => !current)}
+                  className="rounded-2xl border border-white/30 bg-white/20 px-5 py-3 font-sans text-sm font-semibold text-white shadow-lg backdrop-blur transition hover:bg-white/30"
+                >
+                  {focusIsPaused ? 'Resume' : 'Pause'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void completeFocusSession()}
+                  className="rounded-2xl border border-[#D8A694]/40 bg-[#D8A694]/20 px-5 py-3 font-sans text-sm font-semibold text-white shadow-lg backdrop-blur transition hover:bg-[#D8A694]/30"
+                >
+                  Complete
+                </button>
               </div>
-            ) : null}
+
+              {focusError ? (
+                <div className="mt-6 rounded-2xl border border-[#D8A694]/30 bg-[#A86A65]/40 px-4 py-3 font-sans text-sm text-white">
+                  {focusError}
+                </div>
+              ) : null}
+            </div>
           </div>
         </div>
-      </div>
+      </FocusModeErrorBoundary>
     )
   }
-
-  useEffect(() => {
-    if (!focusActive || focusIsPaused) return
-
-    const intervalId = window.setInterval(() => {
-      setFocusTimeSeconds((current) => current - 1)
-      setFocusElapsedSeconds((current) => current + 1)
-    }, 1000)
-
-    return () => window.clearInterval(intervalId)
-  }, [focusActive, focusIsPaused])
-
-  useEffect(() => {
-    if (!scrollActive || scrollReviewing) return
-
-    const intervalId = window.setInterval(() => {
-      setScrollElapsedSeconds((current) => current + 1)
-    }, 1000)
-
-    return () => window.clearInterval(intervalId)
-  }, [scrollActive, scrollReviewing])
-
-  useEffect(() => {
-    if (!focusActive || focusTimeSeconds > 0 || focusCompleteRequested) return
-
-    setFocusCompleteRequested(true)
-    void completeFocusSession()
-  }, [focusActive, focusTimeSeconds, focusCompleteRequested])
-
-  useEffect(() => {
-    if (!focusActive) return
-
-    const handleBeforeUnload = (event: BeforeUnloadEvent) => {
-      event.preventDefault()
-      event.returnValue = ''
-    }
-
-    window.addEventListener('beforeunload', handleBeforeUnload)
-    return () => window.removeEventListener('beforeunload', handleBeforeUnload)
-  }, [focusActive])
-
-  useEffect(() => {
-    if (focusTaskId && !focusTaskOptions.some((task) => task.id === focusTaskId)) {
-      setFocusTaskId('')
-    }
-  }, [focusTaskId, focusTaskOptions])
 
   return (
     <div className="min-h-screen bg-[#754B4D] px-4 py-8 text-[#D8A694] sm:px-6 lg:px-8">

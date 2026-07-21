@@ -6,6 +6,7 @@ import Dashboard from './pages/Dashboard'
 function AppContent() {
   const { user, loading } = useAuth()
   const [showAuth, setShowAuth] = useState(false)
+  const debugFocusMode = typeof window !== 'undefined' && window.location.search.includes('debugFocus=1')
 
   useEffect(() => {
     if (!loading && !user) {
@@ -21,6 +22,10 @@ function AppContent() {
         </div>
       </div>
     )
+  }
+
+  if (debugFocusMode) {
+    return <Dashboard />
   }
 
   if (!user) {
