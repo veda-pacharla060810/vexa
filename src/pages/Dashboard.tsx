@@ -95,6 +95,11 @@ function Dashboard() {
   const [eventsError, setEventsError] = useState('')
   const [eventFormState, setEventFormState] = useState<EventFormState>(initialEventFormState)
   const [eventSubmitting, setEventSubmitting] = useState(false)
+  const [calendarMonth, setCalendarMonth] = useState(() => {
+    const today = new Date()
+    return new Date(today.getFullYear(), today.getMonth(), 1)
+  })
+  const [selectedDate, setSelectedDate] = useState(() => formatDateKey(new Date()))
 
   const fetchTasks = async () => {
     if (!user?.id) return
@@ -307,6 +312,42 @@ function Dashboard() {
     }
   }, [tasks])
 
+  const calendarDays = useMemo(() => getMonthGrid(calendarMonth), [calendarMonth])
+
+  const selectedDayKey = selectedDate ?? formatDateKey(new Date())
+  const selectedDay = new Date(`${selectedDayKey}T00:00:00`)
+  const selectedDayIsPast = startOfDay(selectedDay) < startOfDay(new Date())
+
+  const selectedDayEvents = useMemo(() => {
+    const targetDate = selectedDayKey
+    return events.filter((event) => formatDateKey(event.event_date) === targetDate)
+  }, [events, selectedDayKey])
+
+  const selectedDayTaskItems = useMemo(() => {
+    const targetDate = selectedDayKey
+    return tasks.filter((task) => {
+      const deadlineMatches = task.deadline ? formatDateKey(task.deadline) === targetDate : false
+      const completedMatches = task.completed && task.created_at ? formatDateKey(task.created_at) === targetDate : false
+      return deadlineMatches || completedMatches
+    })
+  }, [tasks, selectedDayKey])
+
+  const handleDaySelect = (date: Date) => {
+    const nextKey = formatDateKey(date)
+    setSelectedDate(nextKey)
+    setEventFormState((current) => ({
+      ...current,
+      event_date: toDateTimeInputValue(new Date(date.getFullYear(), date.getMonth(), date.getDate(), 9, 0)),
+    }))
+  }
+
+  const resetEventForm = () => {
+    setEventFormState({
+      ...initialEventFormState,
+      event_date: selectedDate ? toDateTimeInputValue(new Date(`${selectedDate}T09:00`)) : '',
+    })
+  }
+
   return (
     <div className="min-h-screen bg-[#754B4D] px-4 py-8 text-[#D8A694] sm:px-6 lg:px-8">
       <div className="mx-auto flex max-w-4xl flex-col rounded-[2rem] border border-white/20 bg-white/10 p-6 shadow-2xl backdrop-blur-xl sm:p-8">
@@ -497,171 +538,299 @@ function Dashboard() {
         ) : (
           <>
             <div className="mt-6 rounded-[1.5rem] border border-white/20 bg-[#754B4D]/70 p-4 shadow-inner">
-              <form className="space-y-4" onSubmit={handleEventSubmit}>
-                <input
-                  value={eventFormState.title}
-                  onChange={(event) => setEventFormState((current) => ({ ...current, title: event.target.value }))}
-                  placeholder="Add an event"
-                  className="w-full rounded-2xl border border-white/20 bg-white/20 px-4 py-3 font-sans text-sm text-white outline-none placeholder:text-white/60 focus:border-[#D8A694] focus:ring-2 focus:ring-[#D8A694]/40"
-                />
-
-                <div className="grid gap-4 sm:grid-cols-2">
-                  <div>
-                    <label className="mb-2 block font-sans text-sm text-[#D8A694]">Type</label>
-                    <select
-                      value={eventFormState.event_type}
-                      onChange={(event) => setEventFormState((current) => ({ ...current, event_type: event.target.value as EventFormState['event_type'] }))}
-                      className="w-full rounded-2xl border border-white/20 bg-white/20 px-3 py-2 font-sans text-sm text-white outline-none focus:border-[#D8A694]"
-                    >
-                      <option value="test" className="text-[#754B4D]">Test</option>
-                      <option value="assignment" className="text-[#754B4D]">Assignment</option>
-                      <option value="personal" className="text-[#754B4D]">Personal</option>
-                      <option value="other" className="text-[#754B4D]">Other</option>
-                    </select>
-                  </div>
-
-                  <div>
-                    <label className="mb-2 block font-sans text-sm text-[#D8A694]">Event date</label>
-                    <input
-                      type="datetime-local"
-                      value={eventFormState.event_date}
-                      onChange={(event) => setEventFormState((current) => ({ ...current, event_date: event.target.value }))}
-                      className="w-full rounded-2xl border border-white/20 bg-white/20 px-3 py-2 font-sans text-sm text-white outline-none focus:border-[#D8A694]"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="mb-2 block font-sans text-sm text-[#D8A694]">Reminder</label>
-                    <input
-                      type="datetime-local"
-                      value={eventFormState.reminder_at}
-                      onChange={(event) => setEventFormState((current) => ({ ...current, reminder_at: event.target.value }))}
-                      className="w-full rounded-2xl border border-white/20 bg-white/20 px-3 py-2 font-sans text-sm text-white outline-none focus:border-[#D8A694]"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="mb-2 block font-sans text-sm text-[#D8A694]">Subject</label>
-                    <input
-                      value={eventFormState.subject}
-                      onChange={(event) => setEventFormState((current) => ({ ...current, subject: event.target.value }))}
-                      placeholder={eventFormState.event_type === 'test' ? 'Math, English, etc.' : 'Optional'}
-                      className="w-full rounded-2xl border border-white/20 bg-white/20 px-3 py-2 font-sans text-sm text-white outline-none focus:border-[#D8A694]"
-                    />
-                  </div>
-                </div>
-
+              <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>
-                  <label className="mb-2 block font-sans text-sm text-[#D8A694]">Notes</label>
-                  <textarea
-                    value={eventFormState.notes}
-                    onChange={(event) => setEventFormState((current) => ({ ...current, notes: event.target.value }))}
-                    rows={3}
-                    className="w-full rounded-2xl border border-white/20 bg-white/20 px-3 py-2 font-sans text-sm text-white outline-none focus:border-[#D8A694]"
-                  />
+                  <p className="font-mono text-xs uppercase tracking-[0.3em] text-[#D8A694]/70">month view</p>
+                  <h2 className="mt-2 font-serif text-2xl text-white">{formatMonthYear(calendarMonth)}</h2>
                 </div>
 
-                <div className="flex justify-end">
+                <div className="flex items-center gap-2">
                   <button
-                    type="submit"
-                    disabled={eventSubmitting || !eventFormState.title.trim() || (eventFormState.event_type === 'test' && !eventFormState.subject.trim()) || !eventFormState.event_date}
-                    className="rounded-2xl border border-white/30 bg-white/20 px-4 py-2 font-sans text-sm font-semibold text-white shadow-lg backdrop-blur transition hover:bg-white/30 disabled:cursor-not-allowed disabled:opacity-60"
+                    type="button"
+                    onClick={() => setCalendarMonth(new Date(calendarMonth.getFullYear(), calendarMonth.getMonth() - 1, 1))}
+                    className="rounded-2xl border border-white/30 bg-white/20 px-3 py-2 font-sans text-sm font-semibold text-white shadow-lg backdrop-blur transition hover:bg-white/30"
                   >
-                    {eventSubmitting ? 'Saving…' : 'Save event'}
+                    ←
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const today = new Date()
+                      setCalendarMonth(new Date(today.getFullYear(), today.getMonth(), 1))
+                      setSelectedDate(formatDateKey(today))
+                      setEventFormState({
+                        ...initialEventFormState,
+                        event_date: toDateTimeInputValue(new Date(today.getFullYear(), today.getMonth(), today.getDate(), 9, 0)),
+                      })
+                    }}
+                    className="rounded-2xl border border-white/30 bg-white/20 px-3 py-2 font-sans text-sm font-semibold text-white shadow-lg backdrop-blur transition hover:bg-white/30"
+                  >
+                    Today
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setCalendarMonth(new Date(calendarMonth.getFullYear(), calendarMonth.getMonth() + 1, 1))}
+                    className="rounded-2xl border border-white/30 bg-white/20 px-3 py-2 font-sans text-sm font-semibold text-white shadow-lg backdrop-blur transition hover:bg-white/30"
+                  >
+                    →
                   </button>
                 </div>
-              </form>
+              </div>
+
+              <div className="mt-4 grid grid-cols-7 gap-2 text-center font-mono text-[11px] uppercase tracking-[0.2em] text-[#D8A694]/80">
+                {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((dayLabel) => (
+                  <div key={dayLabel}>{dayLabel}</div>
+                ))}
+              </div>
+
+              <div className="mt-2 grid grid-cols-7 gap-2">
+                {calendarDays.map((day) => {
+                  const dayKey = formatDateKey(day.date)
+                  const dayEvents = events.filter((event) => formatDateKey(event.event_date) === dayKey)
+                  const hasTaskDeadline = tasks.some((task) => (task.deadline ? formatDateKey(task.deadline) === dayKey : false))
+                  const hasCompletedTask = tasks.some((task) => (task.completed && task.created_at ? formatDateKey(task.created_at) === dayKey : false))
+                  const eventTypesPresent = Array.from(new Set(dayEvents.map((event) => event.event_type)))
+                  const isSelected = dayKey === selectedDayKey
+
+                  return (
+                    <button
+                      key={dayKey}
+                      type="button"
+                      onClick={() => handleDaySelect(day.date)}
+                      className={`flex min-h-[88px] flex-col items-start rounded-[1rem] border p-2 text-left transition ${day.isCurrentMonth ? 'border-white/20 bg-white/10 text-white' : 'border-white/10 bg-white/5 text-white/60'} ${isSelected ? 'ring-2 ring-[#D8A694]' : ''} ${day.isToday ? 'bg-[#D8A694]/20' : ''}`}
+                    >
+                      <div className="flex w-full items-center justify-between">
+                        <span className={`text-sm font-semibold ${day.isToday ? 'text-[#D8A694]' : ''}`}>{day.date.getDate()}</span>
+                        {day.isToday ? <span className="rounded-full border border-[#D8A694]/40 px-1.5 py-0.5 text-[10px] uppercase tracking-[0.2em] text-[#D8A694]">today</span> : null}
+                      </div>
+
+                      <div className="mt-2 flex flex-wrap gap-1">
+                        {eventTypesPresent.slice(0, 3).map((eventType) => (
+                          <span key={`${dayKey}-${eventType}`} className={`h-2.5 w-2.5 rounded-full border border-white/20 ${eventTypeMarkerClasses(eventType)}`} />
+                        ))}
+                        {hasTaskDeadline ? <span className="rounded-full border border-[#AB8882]/30 bg-[#AB8882]/20 px-1.5 py-0.5 text-[10px] text-[#D8A694]">D</span> : null}
+                        {hasCompletedTask ? <span className="rounded-full border border-[#D8A694]/30 bg-[#D8A694]/20 px-1.5 py-0.5 text-[10px] text-[#D8A694]">✓</span> : null}
+                      </div>
+                    </button>
+                  )
+                })}
+              </div>
             </div>
 
-            {eventsError ? (
-              <div className="mt-4 rounded-2xl border border-[#D8A694]/30 bg-[#A86A65]/40 px-4 py-3 font-sans text-sm text-white">
-                {eventsError}
+            <div className="mt-6 rounded-[1.5rem] border border-white/20 bg-[#754B4D]/70 p-4 shadow-inner">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <p className="font-mono text-xs uppercase tracking-[0.3em] text-[#D8A694]/70">day panel</p>
+                  <h3 className="mt-2 font-serif text-xl text-white">{formatLongDate(selectedDayKey)}</h3>
+                </div>
+                <span className={`rounded-full border px-3 py-1 text-[11px] uppercase tracking-[0.2em] ${selectedDayIsPast ? 'border-[#AB8882]/40 bg-[#AB8882]/20 text-[#D8A694]' : 'border-[#D8A694]/40 bg-[#D8A694]/20 text-[#D8A694]'}`}>
+                  {selectedDayIsPast ? 'past day' : 'upcoming'}
+                </span>
               </div>
-            ) : null}
 
-            <div className="mt-6 space-y-3">
-              {eventsLoading ? (
-                <div className="rounded-2xl border border-white/20 bg-white/10 px-4 py-4 font-sans text-sm text-white/80">
-                  Loading your calendar…
+              {eventsError ? (
+                <div className="mt-4 rounded-2xl border border-[#D8A694]/30 bg-[#A86A65]/40 px-4 py-3 font-sans text-sm text-white">
+                  {eventsError}
                 </div>
               ) : null}
 
-              {!eventsLoading && events.length === 0 ? (
-                <div className="rounded-2xl border border-white/20 bg-white/10 px-4 py-6 font-mono text-sm text-[#D8A694]">
-                  <div>&gt; scanning_calendar... 0 events detected.</div>
-                  <div>&gt; awaiting_input_</div>
-                </div>
-              ) : null}
-
-              {!eventsLoading && events.length > 0
-                ? events.map((event) => (
-                    <div key={event.id} className="rounded-[1.25rem] border border-white/20 bg-white/10 p-4">
-                      <div className="flex flex-wrap items-start justify-between gap-3">
-                        <div className="min-w-0 flex-1">
-                          <div className="flex flex-wrap items-center gap-2">
-                            <h2 className="font-sans text-base font-semibold text-white">{event.title}</h2>
-                            <span className={`rounded-full border px-2 py-0.5 text-[11px] uppercase tracking-[0.2em] ${eventTypeClasses(event.event_type)}`}>
-                              {event.event_type}
-                            </span>
-                          </div>
-
-                          <p className="mt-2 font-sans text-sm text-white/80">{formatDateTime(event.event_date)}</p>
-                          {event.notes ? <p className="mt-2 font-sans text-sm text-white/70">{event.notes}</p> : null}
-
-                          {event.test ? (
-                            <div className="mt-4 rounded-2xl border border-white/20 bg-[#754B4D]/60 p-3">
-                              <div className="flex flex-wrap items-center justify-between gap-3">
-                                <div>
-                                  <p className="font-sans text-sm text-[#D8A694]">Subject</p>
-                                  <p className="font-sans text-sm text-white">{event.test.subject}</p>
-                                </div>
-                                <div className="w-full sm:w-auto">
-                                  <label className="mb-2 block font-sans text-xs uppercase tracking-[0.2em] text-[#D8A694]">Status</label>
-                                  <select
-                                    value={event.test.preparation_status}
-                                    onChange={(changeEvent) => updateTestProgress(event.id, changeEvent.target.value as TestRow['preparation_status'], event.test?.study_progress ?? 0)}
-                                    className="w-full rounded-2xl border border-white/20 bg-white/20 px-3 py-2 font-sans text-sm text-white outline-none focus:border-[#D8A694]"
-                                  >
-                                    <option value="not_started" className="text-[#754B4D]">Not started</option>
-                                    <option value="in_progress" className="text-[#754B4D]">In progress</option>
-                                    <option value="ready" className="text-[#754B4D]">Ready</option>
-                                  </select>
-                                </div>
-                              </div>
-
-                              <div className="mt-3">
-                                <div className="flex items-center justify-between text-xs uppercase tracking-[0.2em] text-[#D8A694]">
-                                  <span>Study progress</span>
-                                  <span>{event.test.study_progress}%</span>
-                                </div>
-                                <div className="mt-2 h-2 rounded-full bg-white/10">
-                                  <div className="h-2 rounded-full bg-[#D8A694]" style={{ width: `${event.test.study_progress}%` }} />
-                                </div>
-                                <input
-                                  type="range"
-                                  min="0"
-                                  max="100"
-                                  step="5"
-                                  value={event.test.study_progress}
-                                  onChange={(changeEvent) => updateTestProgress(event.id, event.test?.preparation_status ?? 'not_started', Number(changeEvent.target.value))}
-                                  className="mt-3 w-full accent-[#D8A694]"
-                                />
-                              </div>
-                            </div>
-                          ) : null}
-                        </div>
-
-                        <button
-                          type="button"
-                          onClick={() => deleteEvent(event.id)}
-                          className="rounded-2xl border border-white/30 bg-white/20 px-3 py-2 font-sans text-sm font-semibold text-white shadow-lg backdrop-blur transition hover:bg-white/30"
-                        >
-                          Delete
-                        </button>
-                      </div>
+              <div className="mt-4 grid gap-4 lg:grid-cols-[1.1fr_0.9fr]">
+                <div className="space-y-3">
+                  {eventsLoading ? (
+                    <div className="rounded-2xl border border-white/20 bg-white/10 px-4 py-4 font-sans text-sm text-white/80">
+                      Loading your calendar…
                     </div>
-                  ))
-                : null}
+                  ) : null}
+
+                  {!eventsLoading && selectedDayEvents.length === 0 && selectedDayTaskItems.length === 0 ? (
+                    <div className="rounded-[1.25rem] border border-white/20 bg-white/10 px-4 py-5 font-mono text-sm text-[#D8A694]">
+                      <div>&gt; no activity recorded for this day_</div>
+                    </div>
+                  ) : null}
+
+                  {!eventsLoading && selectedDayEvents.length > 0
+                    ? selectedDayEvents.map((event) => (
+                        <div key={event.id} className="rounded-[1.25rem] border border-white/20 bg-white/10 p-4">
+                          <div className="flex flex-wrap items-start justify-between gap-3">
+                            <div className="min-w-0 flex-1">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <h4 className="font-sans text-base font-semibold text-white">{event.title}</h4>
+                                <span className={`rounded-full border px-2 py-0.5 text-[11px] uppercase tracking-[0.2em] ${eventTypeClasses(event.event_type)}`}>
+                                  {event.event_type}
+                                </span>
+                              </div>
+
+                              <p className="mt-2 font-sans text-sm text-white/80">{formatDateTime(event.event_date)}</p>
+                              {event.notes ? <p className="mt-2 font-sans text-sm text-white/70">{event.notes}</p> : null}
+
+                              {event.test ? (
+                                <div className="mt-4 rounded-2xl border border-white/20 bg-[#754B4D]/60 p-3">
+                                  <div className="flex flex-wrap items-center justify-between gap-3">
+                                    <div>
+                                      <p className="font-sans text-sm text-[#D8A694]">Subject</p>
+                                      <p className="font-sans text-sm text-white">{event.test.subject}</p>
+                                    </div>
+                                    <div className="w-full sm:w-auto">
+                                      <label className="mb-2 block font-sans text-xs uppercase tracking-[0.2em] text-[#D8A694]">Status</label>
+                                      <select
+                                        value={event.test.preparation_status}
+                                        onChange={(changeEvent) => updateTestProgress(event.id, changeEvent.target.value as TestRow['preparation_status'], event.test?.study_progress ?? 0)}
+                                        className="w-full rounded-2xl border border-white/20 bg-white/20 px-3 py-2 font-sans text-sm text-white outline-none focus:border-[#D8A694]"
+                                      >
+                                        <option value="not_started" className="text-[#754B4D]">Not started</option>
+                                        <option value="in_progress" className="text-[#754B4D]">In progress</option>
+                                        <option value="ready" className="text-[#754B4D]">Ready</option>
+                                      </select>
+                                    </div>
+                                  </div>
+
+                                  <div className="mt-3">
+                                    <div className="flex items-center justify-between text-xs uppercase tracking-[0.2em] text-[#D8A694]">
+                                      <span>Study progress</span>
+                                      <span>{event.test.study_progress}%</span>
+                                    </div>
+                                    <div className="mt-2 h-2 rounded-full bg-white/10">
+                                      <div className="h-2 rounded-full bg-[#D8A694]" style={{ width: `${event.test.study_progress}%` }} />
+                                    </div>
+                                    <input
+                                      type="range"
+                                      min="0"
+                                      max="100"
+                                      step="5"
+                                      value={event.test.study_progress}
+                                      onChange={(changeEvent) => updateTestProgress(event.id, event.test?.preparation_status ?? 'not_started', Number(changeEvent.target.value))}
+                                      className="mt-3 w-full accent-[#D8A694]"
+                                    />
+                                  </div>
+                                </div>
+                              ) : null}
+                            </div>
+
+                            <button
+                              type="button"
+                              onClick={() => deleteEvent(event.id)}
+                              className="rounded-2xl border border-white/30 bg-white/20 px-3 py-2 font-sans text-sm font-semibold text-white shadow-lg backdrop-blur transition hover:bg-white/30"
+                            >
+                              Delete
+                            </button>
+                          </div>
+                        </div>
+                      ))
+                    : null}
+
+                  {!eventsLoading && selectedDayTaskItems.length > 0
+                    ? selectedDayTaskItems.map((task) => {
+                        const isDeadline = task.deadline ? formatDateKey(task.deadline) === selectedDayKey : false
+                        const isCompleted = task.completed && task.created_at ? formatDateKey(task.created_at) === selectedDayKey : false
+
+                        return (
+                          <div key={task.id} className="rounded-[1.25rem] border border-white/20 bg-white/10 p-4">
+                            <div className="flex items-start justify-between gap-3">
+                              <div>
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <h4 className="font-sans text-base font-semibold text-white">{task.title}</h4>
+                                  <span className={`rounded-full border px-2 py-0.5 text-[11px] uppercase tracking-[0.2em] ${priorityClasses(task.priority)}`}>
+                                    {isCompleted ? 'completed' : isDeadline ? 'deadline' : 'task'}
+                                  </span>
+                                </div>
+                                {task.deadline ? <p className="mt-2 font-sans text-sm text-white/70">Deadline {formatDate(task.deadline)}</p> : null}
+                                {isCompleted ? <p className="mt-2 font-sans text-sm text-white/70">Completed on this day using created_at as a best-effort proxy.</p> : null}
+                              </div>
+                              <span className={`rounded-full border px-2 py-0.5 text-[11px] uppercase tracking-[0.2em] ${task.completed ? 'border-[#D8A694]/40 bg-[#D8A694]/20 text-[#D8A694]' : 'border-[#AB8882]/40 bg-[#AB8882]/20 text-[#D8A694]'}`}>
+                                {task.completed ? 'done' : 'active'}
+                              </span>
+                            </div>
+                          </div>
+                        )
+                      })
+                    : null}
+
+                  <div className="rounded-[1.25rem] border border-white/20 bg-white/10 p-4">
+                    <p className="font-mono text-xs uppercase tracking-[0.2em] text-[#D8A694]/70">focus & scroll</p>
+                    {/* TODO: focus_sessions and scroll_sessions data will populate here once Focus Mode and Scroll Tracker are built */}
+                    <p className="mt-2 font-sans text-sm text-white/70">No focus or scroll data yet for this day.</p>
+                  </div>
+                </div>
+
+                <form className="space-y-4 rounded-[1.25rem] border border-white/20 bg-white/10 p-4" onSubmit={async (event) => {
+                  event.preventDefault()
+                  await handleEventSubmit(event)
+                  resetEventForm()
+                }}>
+                  <input
+                    value={eventFormState.title}
+                    onChange={(event) => setEventFormState((current) => ({ ...current, title: event.target.value }))}
+                    placeholder="Add an event"
+                    className="w-full rounded-2xl border border-white/20 bg-white/20 px-4 py-3 font-sans text-sm text-white outline-none placeholder:text-white/60 focus:border-[#D8A694] focus:ring-2 focus:ring-[#D8A694]/40"
+                  />
+
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <div>
+                      <label className="mb-2 block font-sans text-sm text-[#D8A694]">Type</label>
+                      <select
+                        value={eventFormState.event_type}
+                        onChange={(event) => setEventFormState((current) => ({ ...current, event_type: event.target.value as EventFormState['event_type'] }))}
+                        className="w-full rounded-2xl border border-white/20 bg-white/20 px-3 py-2 font-sans text-sm text-white outline-none focus:border-[#D8A694]"
+                      >
+                        <option value="test" className="text-[#754B4D]">Test</option>
+                        <option value="assignment" className="text-[#754B4D]">Assignment</option>
+                        <option value="personal" className="text-[#754B4D]">Personal</option>
+                        <option value="other" className="text-[#754B4D]">Other</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="mb-2 block font-sans text-sm text-[#D8A694]">Event date</label>
+                      <input
+                        type="datetime-local"
+                        value={eventFormState.event_date}
+                        onChange={(event) => setEventFormState((current) => ({ ...current, event_date: event.target.value }))}
+                        className="w-full rounded-2xl border border-white/20 bg-white/20 px-3 py-2 font-sans text-sm text-white outline-none focus:border-[#D8A694]"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="mb-2 block font-sans text-sm text-[#D8A694]">Reminder</label>
+                      <input
+                        type="datetime-local"
+                        value={eventFormState.reminder_at}
+                        onChange={(event) => setEventFormState((current) => ({ ...current, reminder_at: event.target.value }))}
+                        className="w-full rounded-2xl border border-white/20 bg-white/20 px-3 py-2 font-sans text-sm text-white outline-none focus:border-[#D8A694]"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="mb-2 block font-sans text-sm text-[#D8A694]">Subject</label>
+                      <input
+                        value={eventFormState.subject}
+                        onChange={(event) => setEventFormState((current) => ({ ...current, subject: event.target.value }))}
+                        placeholder={eventFormState.event_type === 'test' ? 'Math, English, etc.' : 'Optional'}
+                        className="w-full rounded-2xl border border-white/20 bg-white/20 px-3 py-2 font-sans text-sm text-white outline-none focus:border-[#D8A694]"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="mb-2 block font-sans text-sm text-[#D8A694]">Notes</label>
+                    <textarea
+                      value={eventFormState.notes}
+                      onChange={(event) => setEventFormState((current) => ({ ...current, notes: event.target.value }))}
+                      rows={3}
+                      className="w-full rounded-2xl border border-white/20 bg-white/20 px-3 py-2 font-sans text-sm text-white outline-none focus:border-[#D8A694]"
+                    />
+                  </div>
+
+                  <div className="flex justify-end">
+                    <button
+                      type="submit"
+                      disabled={eventSubmitting || !eventFormState.title.trim() || (eventFormState.event_type === 'test' && !eventFormState.subject.trim()) || !eventFormState.event_date}
+                      className="rounded-2xl border border-white/30 bg-white/20 px-4 py-2 font-sans text-sm font-semibold text-white shadow-lg backdrop-blur transition hover:bg-white/30 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      {eventSubmitting ? 'Saving…' : 'Save event'}
+                    </button>
+                  </div>
+                </form>
+              </div>
             </div>
           </>
         )}
@@ -692,6 +861,73 @@ function eventTypeClasses(eventType: CalendarEvent['event_type']) {
     default:
       return 'border-white/20 bg-white/10 text-white'
   }
+}
+
+function eventTypeMarkerClasses(eventType: CalendarEvent['event_type']) {
+  switch (eventType) {
+    case 'test':
+      return 'bg-[#A86A65]'
+    case 'assignment':
+      return 'bg-[#AB8882]'
+    case 'personal':
+      return 'bg-[#D8A694]'
+    default:
+      return 'bg-white/80'
+  }
+}
+
+function startOfDay(value: Date) {
+  const date = new Date(value)
+  date.setHours(0, 0, 0, 0)
+  return date
+}
+
+function formatDateKey(value: string | Date) {
+  const date = value instanceof Date ? value : new Date(value)
+  if (Number.isNaN(date.getTime())) return ''
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
+function toDateTimeInputValue(value: Date | string) {
+  const date = value instanceof Date ? value : new Date(value)
+  if (Number.isNaN(date.getTime())) return ''
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  const hours = String(date.getHours()).padStart(2, '0')
+  const minutes = String(date.getMinutes()).padStart(2, '0')
+  return `${year}-${month}-${day}T${hours}:${minutes}`
+}
+
+function getMonthGrid(month: Date) {
+  const firstDay = new Date(month.getFullYear(), month.getMonth(), 1)
+  const firstDayOffset = firstDay.getDay()
+  const daysInMonth = new Date(month.getFullYear(), month.getMonth() + 1, 0).getDate()
+
+  const days: { date: Date; isCurrentMonth: boolean; isToday: boolean }[] = []
+
+  for (let index = 0; index < 42; index += 1) {
+    const dayNumber = index - firstDayOffset + 1
+    const date = new Date(month.getFullYear(), month.getMonth(), dayNumber)
+    const isCurrentMonth = date.getMonth() === month.getMonth()
+    const isToday = formatDateKey(date) === formatDateKey(new Date())
+    days.push({ date, isCurrentMonth, isToday })
+  }
+
+  return days.slice(0, daysInMonth + firstDayOffset + (firstDayOffset > 0 ? 0 : 7))
+}
+
+function formatMonthYear(value: Date) {
+  return value.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
+}
+
+function formatLongDate(value: string) {
+  const date = new Date(`${value}T00:00:00`)
+  if (Number.isNaN(date.getTime())) return value
+  return date.toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric', year: 'numeric' })
 }
 
 function formatDate(value: string) {
