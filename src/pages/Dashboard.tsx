@@ -59,7 +59,20 @@ type EventFormState = {
   subject: string
 }
 
-type ViewMode = 'tasks' | 'calendar' | 'focus'
+type ScrollSession = {
+  id: string
+  user_id: string
+  platform: string | null
+  reason: string | null
+  reflection: string | null
+  was_it_worth_it: 'yes' | 'neutral' | 'no' | null
+  started_at: string
+  ended_at: string
+  duration_minutes: number | null
+  created_at: string
+}
+
+type ViewMode = 'tasks' | 'calendar' | 'focus' | 'scroll'
 
 const focusQuotes = [
   'One task. Right now. That\'s it.',
@@ -120,6 +133,18 @@ function Dashboard() {
   const [focusError, setFocusError] = useState('')
   const [focusCompleteRequested, setFocusCompleteRequested] = useState(false)
   const [focusQuote, setFocusQuote] = useState(focusQuotes[0])
+  const [scrollPlatform, setScrollPlatform] = useState('')
+  const [scrollReason, setScrollReason] = useState('')
+  const [scrollActive, setScrollActive] = useState(false)
+  const [scrollReviewing, setScrollReviewing] = useState(false)
+  const [scrollStartedAt, setScrollStartedAt] = useState<string | null>(null)
+  const [scrollElapsedSeconds, setScrollElapsedSeconds] = useState(0)
+  const [scrollReflection, setScrollReflection] = useState('')
+  const [scrollWorthIt, setScrollWorthIt] = useState<'yes' | 'neutral' | 'no' | null>(null)
+  const [scrollSessions, setScrollSessions] = useState<ScrollSession[]>([])
+  const [scrollLoading, setScrollLoading] = useState(true)
+  const [scrollError, setScrollError] = useState('')
+  const [scrollSubmitting, setScrollSubmitting] = useState(false)
   const [calendarMonth, setCalendarMonth] = useState(() => {
     const today = new Date()
     return new Date(today.getFullYear(), today.getMonth(), 1)
@@ -190,9 +215,32 @@ function Dashboard() {
     )
   }
 
+  const fetchScrollSessions = async () => {
+    if (!user?.id) return
+
+    setScrollLoading(true)
+    setScrollError('')
+
+    const { data, error } = await supabase
+      .from('scroll_sessions')
+      .select('*')
+      .eq('user_id', user.id)
+      .order('started_at', { ascending: false })
+
+    setScrollLoading(false)
+
+    if (error) {
+      setScrollError(`The scroll history could not be loaded: ${error.message}. Please try again.`)
+      return
+    }
+
+    setScrollSessions((data ?? []) as ScrollSession[])
+  }
+
   useEffect(() => {
-    fetchTasks()
-    fetchEvents()
+    void fetchTasks()
+    void fetchEvents()
+    void fetchScrollSessions()
   }, [user?.id])
 
   const handleTaskSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
@@ -412,6 +460,70 @@ function Dashboard() {
     setView('focus')
   }
 
+  const startScrollSession = async (event?: React.FormEvent<HTMLFormElement>) => {
+    event?.preventDefault()
+    if (!user?.id) return
+
+    setScrollError('')
+    setScrollActive(true)
+    setScrollReviewing(false)
+    setScrollStartedAt(new Date().toISOString())
+    setScrollElapsedSeconds(0)
+    setScrollReflection('')
+    setScrollWorthIt(null)
+    setView('scroll')
+  }
+
+  const stopScrollSession = () => {
+    if (!scrollStartedAt) return
+
+    setScrollReviewing(true)
+  }
+
+  const saveScrollSession = async () => {
+    if (!user?.id || !scrollStartedAt) return
+    if (!scrollWorthIt) {
+      setScrollError('Choose whether the scroll was worth it before saving.')
+      return
+    }
+
+    setScrollSubmitting(true)
+    setScrollError('')
+
+    const endedAt = new Date().toISOString()
+    const durationMinutes = Math.max(1, Math.round(scrollElapsedSeconds / 60))
+
+    const payload = {
+      user_id: user.id,
+      platform: scrollPlatform.trim() || null,
+      reason: scrollReason.trim() || null,
+      reflection: scrollReflection.trim() || null,
+      was_it_worth_it: scrollWorthIt,
+      started_at: scrollStartedAt,
+      ended_at: endedAt,
+      duration_minutes: durationMinutes,
+      created_at: endedAt,
+    }
+
+    const { data, error } = await supabase.from('scroll_sessions').insert(payload).select().single()
+    setScrollSubmitting(false)
+
+    if (error || !data) {
+      setScrollError(`The scroll session could not be saved: ${error?.message ?? 'No session returned.'}. Please try again.`)
+      return
+    }
+
+    setScrollSessions((currentSessions) => [data as ScrollSession, ...currentSessions])
+    setScrollActive(false)
+    setScrollReviewing(false)
+    setScrollStartedAt(null)
+    setScrollElapsedSeconds(0)
+    setScrollReflection('')
+    setScrollWorthIt(null)
+    setScrollPlatform('')
+    setScrollReason('')
+  }
+
   const completeFocusSession = async () => {
     if (!user?.id || !focusSessionId) {
       setFocusActive(false)
@@ -526,6 +638,16 @@ function Dashboard() {
   }, [focusActive, focusIsPaused])
 
   useEffect(() => {
+    if (!scrollActive || scrollReviewing) return
+
+    const intervalId = window.setInterval(() => {
+      setScrollElapsedSeconds((current) => current + 1)
+    }, 1000)
+
+    return () => window.clearInterval(intervalId)
+  }, [scrollActive, scrollReviewing])
+
+  useEffect(() => {
     if (!focusActive || focusTimeSeconds > 0 || focusCompleteRequested) return
 
     setFocusCompleteRequested(true)
@@ -582,6 +704,13 @@ function Dashboard() {
               >
                 Focus
               </button>
+              <button
+                type="button"
+                onClick={() => setView('scroll')}
+                className={`rounded-full px-4 py-2 font-sans text-sm ${view === 'scroll' ? 'bg-[#D8A694] text-[#754B4D]' : 'text-white/80'}`}
+              >
+                Scroll
+              </button>
             </div>
 
             <button
@@ -637,6 +766,155 @@ function Dashboard() {
               <div className="mt-4 rounded-2xl border border-white/20 bg-[#754B4D]/60 p-4 font-sans text-sm text-white/75">
                 <p>Default length: 25 minutes.</p>
                 <p className="mt-1">This pass keeps the timer simple and distraction-free, with pause and completion controls built in.</p>
+              </div>
+            </div>
+          </div>
+        ) : view === 'scroll' ? (
+          <div className="mt-6 rounded-[1.5rem] border border-white/20 bg-[#754B4D]/70 p-4 shadow-inner">
+            <div className="rounded-[1.25rem] border border-white/20 bg-white/10 p-6">
+              <p className="font-mono text-xs uppercase tracking-[0.3em] text-[#D8A694]/70">&gt; scroll_tracker</p>
+              <h2 className="mt-3 font-serif text-2xl text-white">Scroll tracking for the late-night spiral.</h2>
+              <p className="mt-2 font-sans text-sm text-white/80">Start a scroll session when you want to notice what you are reaching for, then save how it felt after.</p>
+
+              {!scrollActive ? (
+                <form className="mt-6 space-y-4" onSubmit={(event) => void startScrollSession(event)}>
+                  <div className="grid gap-4 md:grid-cols-2">
+                    <div>
+                      <label className="mb-2 block font-sans text-sm text-[#D8A694]">Platform</label>
+                      <input
+                        value={scrollPlatform}
+                        onChange={(event) => setScrollPlatform(event.target.value)}
+                        placeholder="TikTok, Instagram, YouTube..."
+                        className="w-full rounded-2xl border border-white/20 bg-white/20 px-3 py-2 font-sans text-sm text-white outline-none placeholder:text-white/60 focus:border-[#D8A694]"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="mb-2 block font-sans text-sm text-[#D8A694]">Reason</label>
+                      <input
+                        value={scrollReason}
+                        onChange={(event) => setScrollReason(event.target.value)}
+                        placeholder="Why did you open it?"
+                        className="w-full rounded-2xl border border-white/20 bg-white/20 px-3 py-2 font-sans text-sm text-white outline-none placeholder:text-white/60 focus:border-[#D8A694]"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="flex justify-end">
+                    <button
+                      type="submit"
+                      className="rounded-2xl border border-white/30 bg-white/20 px-4 py-2 font-sans text-sm font-semibold text-white shadow-lg backdrop-blur transition hover:bg-white/30"
+                    >
+                      Start scroll
+                    </button>
+                  </div>
+                </form>
+              ) : null}
+
+              {scrollActive && !scrollReviewing ? (
+                <div className="mt-6 rounded-[1.25rem] border border-white/20 bg-[#754B4D]/60 p-5">
+                  <p className="font-sans text-sm uppercase tracking-[0.3em] text-[#D8A694]">Live session</p>
+                  <div className="mt-4 font-serif text-6xl font-semibold tracking-[0.2em] text-white sm:text-7xl">
+                    {formatCountdown(scrollElapsedSeconds)}
+                  </div>
+                  <p className="mt-4 font-sans text-sm text-white/80">You are noticing the pull, not just falling into it.</p>
+                  <div className="mt-6 flex flex-wrap justify-center gap-3">
+                    <button
+                      type="button"
+                      onClick={() => stopScrollSession()}
+                      className="rounded-2xl border border-white/30 bg-white/20 px-4 py-2 font-sans text-sm font-semibold text-white shadow-lg backdrop-blur transition hover:bg-white/30"
+                    >
+                      Stop scroll
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+
+              {scrollReviewing ? (
+                <div className="mt-6 rounded-[1.25rem] border border-white/20 bg-[#754B4D]/60 p-5">
+                  <p className="font-sans text-sm uppercase tracking-[0.3em] text-[#D8A694]">How did it feel?</p>
+                  <p className="mt-2 font-sans text-sm text-white/80">Reflection is optional. Choosing whether it was worth it is required.</p>
+
+                  <div className="mt-4">
+                    <label className="mb-2 block font-sans text-sm text-[#D8A694]">Reflection</label>
+                    <textarea
+                      value={scrollReflection}
+                      onChange={(event) => setScrollReflection(event.target.value)}
+                      rows={3}
+                      placeholder="What happened? What did you notice?"
+                      className="w-full rounded-2xl border border-white/20 bg-white/20 px-3 py-2 font-sans text-sm text-white outline-none placeholder:text-white/60 focus:border-[#D8A694]"
+                    />
+                  </div>
+
+                  <div className="mt-4">
+                    <p className="mb-2 font-sans text-sm text-[#D8A694]">Was it worth it?</p>
+                    <div className="flex flex-wrap gap-3">
+                      {(['yes', 'neutral', 'no'] as const).map((value) => (
+                        <button
+                          key={value}
+                          type="button"
+                          onClick={() => setScrollWorthIt(value)}
+                          className={`rounded-full border px-4 py-2 font-sans text-sm font-semibold capitalize transition ${scrollWorthIt === value ? 'border-[#D8A694] bg-[#D8A694]/30 text-white' : 'border-white/30 bg-white/10 text-white/80 hover:bg-white/20'}`}
+                        >
+                          {value}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="mt-6 flex justify-end">
+                    <button
+                      type="button"
+                      onClick={() => void saveScrollSession()}
+                      disabled={scrollSubmitting}
+                      className="rounded-2xl border border-white/30 bg-white/20 px-4 py-2 font-sans text-sm font-semibold text-white shadow-lg backdrop-blur transition hover:bg-white/30 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      {scrollSubmitting ? 'Saving…' : 'Save scroll log'}
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+
+              {scrollError ? (
+                <div className="mt-4 rounded-2xl border border-[#D8A694]/30 bg-[#A86A65]/40 px-4 py-3 font-sans text-sm text-white">
+                  {scrollError}
+                </div>
+              ) : null}
+
+              <div className="mt-6 rounded-[1.25rem] border border-white/20 bg-[#754B4D]/60 p-5">
+                <p className="font-mono text-xs uppercase tracking-[0.3em] text-[#D8A694]/70">scroll log</p>
+
+                {scrollLoading ? (
+                  <p className="mt-3 font-sans text-sm text-white/80">Loading your scroll history…</p>
+                ) : null}
+
+                {!scrollLoading && scrollSessions.length === 0 ? (
+                  <p className="mt-3 font-mono text-sm text-[#D8A694]">&gt; scroll_log_empty. no sessions recorded_</p>
+                ) : null}
+
+                {!scrollLoading && scrollSessions.length > 0 ? (
+                  <div className="mt-4 space-y-3">
+                    {scrollSessions.map((session) => (
+                      <div key={session.id} className="rounded-[1rem] border border-white/20 bg-white/10 p-4">
+                        <div className="flex flex-wrap items-start justify-between gap-3">
+                          <div>
+                            <p className="font-sans text-sm font-semibold text-white">{session.platform ?? 'General scroll'}</p>
+                            <p className="mt-1 font-sans text-sm text-white/70">{session.reason ?? 'No reason recorded'}</p>
+                          </div>
+                          <span className="rounded-full border border-[#D8A694]/40 bg-[#D8A694]/20 px-2.5 py-1 text-[11px] uppercase tracking-[0.2em] text-[#D8A694]">
+                            {session.was_it_worth_it ?? 'neutral'}
+                          </span>
+                        </div>
+                        <div className="mt-3 flex flex-wrap gap-3 font-sans text-sm text-white/75">
+                          <span>{session.duration_minutes ? `${session.duration_minutes} min` : 'timing pending'}</span>
+                          <span>•</span>
+                          <span>{formatDateTime(session.started_at)}</span>
+                        </div>
+                        {session.reflection ? <p className="mt-3 font-sans text-sm text-white/70">{session.reflection}</p> : null}
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
               </div>
             </div>
           </div>
