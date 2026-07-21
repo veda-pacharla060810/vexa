@@ -576,6 +576,52 @@ function Dashboard() {
     setView('tasks')
   }
 
+  useEffect(() => {
+    if (!focusActive || focusIsPaused) return
+
+    const intervalId = window.setInterval(() => {
+      setFocusTimeSeconds((current) => current - 1)
+      setFocusElapsedSeconds((current) => current + 1)
+    }, 1000)
+
+    return () => window.clearInterval(intervalId)
+  }, [focusActive, focusIsPaused])
+
+  useEffect(() => {
+    if (!focusActive || focusTimeSeconds > 0 || focusCompleteRequested) return
+
+    setFocusCompleteRequested(true)
+    void completeFocusSession()
+  }, [focusActive, focusTimeSeconds, focusCompleteRequested])
+
+  useEffect(() => {
+    if (!focusActive) return
+
+    const handleBeforeUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault()
+      event.returnValue = ''
+    }
+
+    window.addEventListener('beforeunload', handleBeforeUnload)
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload)
+  }, [focusActive])
+
+  useEffect(() => {
+    if (focusTaskId && !focusTaskOptions.some((task) => task.id === focusTaskId)) {
+      setFocusTaskId('')
+    }
+  }, [focusTaskId, focusTaskOptions])
+
+  useEffect(() => {
+    if (!scrollActive || scrollReviewing) return
+
+    const intervalId = window.setInterval(() => {
+      setScrollElapsedSeconds((current) => current + 1)
+    }, 1000)
+
+    return () => window.clearInterval(intervalId)
+  }, [scrollActive, scrollReviewing])
+
   if (focusActive) {
     return (
       <div className="min-h-screen bg-[#754B4D] px-4 py-8 text-[#D8A694] sm:px-6 lg:px-8">
